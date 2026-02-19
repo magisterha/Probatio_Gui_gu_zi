@@ -2,8 +2,8 @@ import streamlit as st
 from supabase import create_client, Client
 import google.generativeai as genai
 import json
-import io # Para manejar el archivo en memoria
-from docx import Document # Para crear el Word
+import io 
+from docx import Document 
 
 # --- 1. CONFIGURACIÓN Y DICCIONARIO DE IDIOMAS ---
 
@@ -11,7 +11,8 @@ TRANSLATIONS = {
     "Español": {
         "page_title": "Buscador de 訓詁",
         "main_title": "🏯 Buscador de 訓詁 (Xùngǔ)",
-        "desc": "Consulta las 'Glosas de 鬼谷子' y genera análisis con IA.",
+        "desc": "Consulta múltiples fuentes clásicas y genera análisis exegéticos con IA.",
+        "db_select": "Bases de datos a consultar",
         "input_char": "Sinograma(s)",
         "input_char_placeholder": "Ej: 粵, 若...",
         "input_req": "Petición concreta",
@@ -22,10 +23,10 @@ TRANSLATIONS = {
         "other_placeholder": "Ej: Tabla comparativa markdown",
         "resp_lang": "Idioma de la respuesta (IA)",
         "btn_analyze": "🔍 Analizar con Gemini",
-        "warn_input": "Por favor, introduce al menos un sinograma.",
-        "searching": "Buscando '{input}' en 'Glosas de 鬼谷子'...",
-        "error_not_found": "No se encontró el sinograma '{input}' en la base de datos.",
-        "success_found": "¡Contexto encontrado! ({count} documentos)",
+        "warn_input": "Por favor, introduce al menos un sinograma y selecciona al menos una base de datos.",
+        "searching": "Buscando '{input}' en las fuentes seleccionadas...",
+        "error_not_found": "No se encontró el sinograma '{input}' en las bases de datos seleccionadas.",
+        "success_found": "¡Contexto encontrado! ({count} documentos en total)",
         "analyzing": "Consultando a Gemini 2.0 Flash...",
         "result_title": "📜 Resultado del Análisis",
         "source_title": "Ver fuentes JSON utilizadas (Evidencia)",
@@ -36,7 +37,8 @@ TRANSLATIONS = {
     "Traditional Chinese": {
         "page_title": "訓詁搜尋器",
         "main_title": "🏯 訓詁搜尋器 (Xùngǔ)",
-        "desc": "查詢「鬼谷子」註釋並透過 AI 生成分析。",
+        "desc": "查詢多種經典文獻並透過 AI 生成分析。",
+        "db_select": "要查詢的資料庫",
         "input_char": "漢字",
         "input_char_placeholder": "例如：粵, 若...",
         "input_req": "具體要求",
@@ -47,10 +49,10 @@ TRANSLATIONS = {
         "other_placeholder": "例如：Markdown 比較表",
         "resp_lang": "回覆語言 (AI)",
         "btn_analyze": "🔍 使用 Gemini 分析",
-        "warn_input": "請輸入至少一個漢字。",
-        "searching": "正在「Glosas de 鬼谷子」中搜尋 '{input}'...",
-        "error_not_found": "資料庫中找不到漢字 '{input}'。",
-        "success_found": "找到上下文！({count} 份文件)",
+        "warn_input": "請輸入至少一個漢字，並選擇至少一個資料庫。",
+        "searching": "正在所選來源中搜尋 '{input}'...",
+        "error_not_found": "在所選資料庫中找不到漢字 '{input}'。",
+        "success_found": "找到上下文！(共 {count} 份文件)",
         "analyzing": "正在諮詢 Gemini 2.0 Flash...",
         "result_title": "📜 分析結果",
         "source_title": "查看使用的 JSON 來源 (證據)",
@@ -61,7 +63,8 @@ TRANSLATIONS = {
     "English": {
         "page_title": "Xùngǔ Searcher",
         "main_title": "🏯 Xùngǔ Searcher (Exegesis)",
-        "desc": "Search 'Glosses of Guiguzi' and generate AI analysis.",
+        "desc": "Search multiple classical sources and generate AI exegesis analysis.",
+        "db_select": "Databases to query",
         "input_char": "Character(s)",
         "input_char_placeholder": "E.g.: 粵, 若...",
         "input_req": "Specific Request",
@@ -72,10 +75,10 @@ TRANSLATIONS = {
         "other_placeholder": "E.g.: Markdown comparison table",
         "resp_lang": "Response Language (AI)",
         "btn_analyze": "🔍 Analyze with Gemini",
-        "warn_input": "Please enter at least one character.",
-        "searching": "Searching for '{input}' in 'Glosas de 鬼谷子'...",
-        "error_not_found": "Character '{input}' not found in database.",
-        "success_found": "Context found! ({count} documents)",
+        "warn_input": "Please enter at least one character and select at least one database.",
+        "searching": "Searching for '{input}' in selected sources...",
+        "error_not_found": "Character '{input}' not found in selected databases.",
+        "success_found": "Context found! ({count} documents total)",
         "analyzing": "Consulting Gemini 2.0 Flash...",
         "result_title": "📜 Analysis Result",
         "source_title": "View JSON sources used (Evidence)",
@@ -91,6 +94,17 @@ st.set_page_config(page_title="Sinología AI", layout="centered")
 idiomas_disponibles = ["Español", "Traditional Chinese", "English"]
 lang_sel = st.sidebar.selectbox("Language / Idioma / 語言", idiomas_disponibles)
 T = TRANSLATIONS[lang_sel]
+
+# LISTA DE TABLAS DISPONIBLES EN SUPABASE
+TABLAS_DISPONIBLES = [
+    "Glosas de 鬼谷子",
+    "Analectas de Confucio",
+    "Fuentes secundarias",
+    "JSON de investigación",
+    "Mencio",
+    "Xunzi",
+    "戰國策"
+]
 
 # --- 3. CONEXIÓN A SUPABASE Y GEMINI ---
 try:
@@ -109,12 +123,8 @@ def crear_word(titulo, subtitulo, contenido):
     doc = Document()
     doc.add_heading(titulo, 0)
     doc.add_heading(subtitulo, level=1)
-    # Streamlit devuelve markdown, pero Word necesita texto plano o un parser complejo.
-    # Por simplicidad y robustez, insertamos el texto. 
-    # (Si la respuesta tiene tablas complejas, esto solo pondrá el texto)
     doc.add_paragraph(contenido)
     
-    # Guardar en buffer de memoria (no en disco)
     bio = io.BytesIO()
     doc.save(bio)
     bio.seek(0)
@@ -125,6 +135,13 @@ st.title(T["main_title"])
 st.markdown(T["desc"])
 
 with st.form("research_form"):
+    # Selector de bases de datos
+    tablas_seleccionadas = st.multiselect(
+        T["db_select"], 
+        options=TABLAS_DISPONIBLES, 
+        default=TABLAS_DISPONIBLES # Por defecto selecciona todas, puedes dejarlo vacío 'default=[]' para una hoja totalmente en blanco
+    )
+
     col1, col2 = st.columns([1, 3])
     with col1:
         sinograma_input = st.text_input(T["input_char"], placeholder=T["input_char_placeholder"])
@@ -143,19 +160,24 @@ with st.form("research_form"):
 
 # --- 6. LÓGICA DEL BACKEND ---
 if submitted:
-    if not sinograma_input:
+    if not sinograma_input or not tablas_seleccionadas:
         st.warning(T["warn_input"])
     else:
-        # A) BÚSQUEDA
+        # A) BÚSQUEDA MULTI-TABLA
         with st.spinner(T["searching"].format(input=sinograma_input)):
+            contexto_encontrado = []
             try:
-                response = supabase.table('Glosas de 鬼谷子').select("*").execute()
-                
-                contexto_encontrado = []
-                for fila in response.data:
-                    contenido_str = json.dumps(fila, ensure_ascii=False)
-                    if sinograma_input in contenido_str:
-                        contexto_encontrado.append(fila)
+                for tabla in tablas_seleccionadas:
+                    response = supabase.table(tabla).select("*").execute()
+                    
+                    for fila in response.data:
+                        contenido_str = json.dumps(fila, ensure_ascii=False)
+                        if sinograma_input in contenido_str:
+                            # Añadimos la fuente para que la IA sepa de dónde viene
+                            contexto_encontrado.append({
+                                "Fuente/Tabla": tabla,
+                                "Datos": fila
+                            })
                 
                 if not contexto_encontrado:
                     st.error(T["error_not_found"].format(input=sinograma_input))
@@ -174,20 +196,20 @@ if submitted:
                 formato_final = formato_otro if tipo_formato == T["formats"][3] else tipo_formato
 
                 prompt_final = f"""
-                Role: Expert Sinologist in 'Xungu' (Exegesis) and the Guiguzi text.
+                Role: Expert Sinologist in classical Chinese texts and 'Xungu' (Exegesis).
                 
                 TASK:
                 Analyze the character(s): "{sinograma_input}".
                 User specific request: "{peticion_concreta}"
 
-                RETRIEVED CONTEXT FROM DATABASE (Table: Glosas de 鬼谷子):
+                RETRIEVED CONTEXT FROM DATABASES:
                 ```json
                 {contexto_texto}
                 ```
 
                 INSTRUCTIONS:
-                1. Base your answer PRIMARILY on the provided JSON context.
-                2. If the context contains specific glosses for the Guiguzi, prioritize them.
+                1. Base your answer PRIMARILY on the provided JSON context. Make sure to reference the different sources (e.g., Confucius, Mencius, Guiguzi) if they appear in the data.
+                2. Synthesize the different meanings across the provided classical texts.
                 3. Desired Output Format: {formato_final}.
                 4. RESPONSE LANGUAGE: {idioma_salida}.
                 """
@@ -200,7 +222,6 @@ if submitted:
                 st.write(response_ai.text)
                 
                 # D) BOTÓN DE DESCARGA WORD
-                # Generamos el archivo en memoria
                 word_file = crear_word(
                     titulo=T["main_title"], 
                     subtitulo=f"{T['input_char']}: {sinograma_input}", 
