@@ -4,7 +4,7 @@ import google.generativeai as genai
 import json
 import io 
 from docx import Document 
-import re # ¡Añadido para limpiar la puntuación del prompt!
+import re 
 
 # --- 1. CONFIGURACIÓN Y DICCIONARIO DE IDIOMAS ---
 
@@ -145,36 +145,33 @@ if submitted:
                     # Inicializamos la consulta base
                     query = supabase.table(tabla).select("*")
                     
-                    # --- MODIFICACIÓN ESPECÍFICA PARA FUENTES SECUNDARIAS ---
+                    # --- IA ROUTER PARA FUENTES SECUNDARIAS ---
                     if tabla == "Fuentes secundarias":
+                        st.info("🧠 IA Router analizando tu petición para extraer palabras clave...")
                         
-                        # 1. Limpiamos símbolos de interrogación y puntuación
-                        prompt_limpio = re.sub(r'[^\w\s]', '', peticion_concreta)
+                        prompt_extraccion = f"""
+                        Extrae un máximo de 3 palabras clave principales de esta petición para buscar en una base de datos académica. 
+                        Ignora verbos conversacionales (resumir, explicar, puedes, etc) y palabras vacías. 
+                        Devuelve SOLO las palabras clave separadas por comas, sin texto adicional, sin viñetas y sin comillas.
+                        Petición: "{peticion_concreta}"
+                        """
                         
-                        # 2. Lista negra de "Stop Words" (palabras conversacionales a ignorar)
-                        palabras_basura = {
-                            "puedes", "podrias", "quiero", "necesito", "sobre", 
-                            "toda", "todo", "dime", "hazme", "resumir", "resumen", 
-                            "explicar", "analiza", "como", "para", "este", "esta", 
-                            "estos", "cual", "cuales", "quien", "quienes"
-                        }
+                        modelo_rapido = genai.GenerativeModel('gemini-2.0-flash')
+                        respuesta_keys = modelo_rapido.generate_content(prompt_extraccion)
                         
-                        # 3. Extraemos palabras > 3 letras que NO estén en la lista negra
-                        keywords_usuario = [w for w in prompt_limpio.split() if len(w) > 3 and w.lower() not in palabras_basura]
+                        claves_ia = [k.strip() for k in respuesta_keys.text.split(",") if k.strip()]
                         
-                        if keywords_usuario:
-                            # 4. Construimos un filtro OR dinámico
-                            # Usamos dobles comillas para el nombre exacto de la columna "Palabras Clave"
-                            condiciones_or = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in keywords_usuario])
-                            
-                            # Aplicamos el filtro OR a la consulta
+                        if claves_ia:
+                            # Construimos el filtro OR dinámico con la columna "Palabras Clave"
+                            condiciones_or = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in claves_ia])
                             query = query.or_(condiciones_or)
                             
-                            # Mostramos en la interfaz qué palabras estamos buscando realmente
-                            palabras_mostradas = ", ".join(keywords_usuario)
-                            st.info(f"Filtro inteligente activado en '{tabla}'. Buscando: **{palabras_mostradas}**")
+                            palabras_mostradas = ", ".join(claves_ia)
+                            st.success(f"🎯 Búsqueda optimizada. Buscando en Supabase: **{palabras_mostradas}**")
+                        else:
+                            st.warning("⚠️ La IA no pudo extraer palabras clave claras. Se buscará en toda la base de datos.")
                     
-                    # Ejecutamos la consulta (filtrada o completa según el caso)
+                    # Ejecutamos la consulta
                     response = query.execute()
                     
                     if response.data:
@@ -193,13 +190,13 @@ if submitted:
                 st.error(f"Error Supabase: {e}")
                 st.stop()
 
-        # B) GENERACIÓN CON GEMINI
+        # --- 7. GENERACIÓN CON GEMINI Y CITAS ESTRICTAS ---
         with st.spinner(T["analyzing"]):
             try:
                 contexto_texto = json.dumps(contexto_encontrado, indent=2, ensure_ascii=False)
 
                 prompt_final = f"""
-                Role: Expert Sinologist in classical Chinese texts and 'Xungu' (Exegesis).
+                Role: You are an Expert Sinologist specializing in classical Chinese texts, historiography, and 'Xungu' (Exegesis).
                 
                 USER PROMPT / TASK:
                 "{peticion_concreta}"
@@ -211,8 +208,11 @@ if submitted:
 
                 INSTRUCTIONS:
                 1. Answer the user's prompt based PRIMARILY on the provided JSON context. 
-                2. Explicitly cite or reference the specific sources/tables (e.g., Analectas, Mencio, Guiguzi, Fuentes secundarias) if they are relevant to your explanation.
-                3. RESPONSE LANGUAGE: {idioma_salida}.
+                2. EXPLICIT CITATIONS REQUIRED: Every time you mention an author's argument, thesis, or data from the JSON, you MUST cite it.
+                3. HOW TO CITE: Look at the end of each JSON record for fields like "citation_chicago", "referencia_bibliografica", or "citation". You must use these exact strings to construct a "Bibliography" or "Referencias" section at the end of your response. 
+                4. IN-TEXT CITATIONS: Use parentheses to cite the author and year in the body of your text (e.g., "Como señala Pines (2013)..." or "El ritual es visto como domesticación (Puett, 2010)").
+                5. Do not invent information. If the answer is not in the JSON, state that you do not have enough data.
+                6. RESPONSE LANGUAGE: {idioma_salida}. Ensure the tone is academic, structured, and easy to read.
                 """
 
                 model = genai.GenerativeModel('gemini-2.0-flash') 
