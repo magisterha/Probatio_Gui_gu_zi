@@ -19,8 +19,8 @@ TRANSLATIONS = {
         "btn_analyze": "🔍 Analizar con Gemini",
         "warn_input": "Por favor, introduce un prompt y selecciona al menos una base de datos.",
         "searching": "Extrayendo información de las fuentes seleccionadas...",
-        "error_not_found": "No se encontraron datos en las tablas seleccionadas.",
-        "success_found": "¡Contexto cargado correctamente!",
+        "error_not_found": "No se encontraron datos que coincidan con los criterios.",
+        "success_found": "¡Contexto filtrado y cargado correctamente!",
         "analyzing": "Consultando a Gemini 2.0 Flash...",
         "result_title": "📜 Resultado del Análisis",
         "source_title": "Ver datos JSON enviados a la IA",
@@ -117,17 +117,14 @@ st.title(T["main_title"])
 st.markdown(T["desc"])
 
 with st.form("research_form"):
-    # Selector de bases de datos (Vacío por defecto)
     tablas_seleccionadas = st.multiselect(
         T["db_select"], 
         options=TABLAS_DISPONIBLES, 
         default=[] 
     )
 
-    # Área de texto más grande para el prompt
     peticion_concreta = st.text_area(T["input_req"], placeholder=T["input_req_placeholder"], height=100)
 
-    # Selector de idioma de salida
     idioma_salida = st.selectbox(
         T["resp_lang"],
         options=["Español", "English", "中文 (Traditional Chinese)", "Français"]
@@ -135,18 +132,33 @@ with st.form("research_form"):
 
     submitted = st.form_submit_button(T["btn_analyze"])
 
-# --- 6. LÓGICA DEL BACKEND ---
+# --- 6. LÓGICA DEL BACKEND (CON FILTRADO POR COLUMNA 5) ---
 if submitted:
     if not peticion_concreta or not tablas_seleccionadas:
         st.warning(T["warn_input"])
     else:
-        # A) BÚSQUEDA MULTI-TABLA (Extracción completa)
         with st.spinner(T["searching"]):
             contexto_encontrado = []
             try:
                 for tabla in tablas_seleccionadas:
-                    # Traemos todos los datos de las tablas seleccionadas
-                    response = supabase.table(tabla).select("*").execute()
+                    # Inicializamos la consulta base
+                    query = supabase.table(tabla).select("*")
+                    
+                    # --- MODIFICACIÓN ESPECÍFICA PARA FUENTES SECUNDARIAS ---
+                    if tabla == "Fuentes secundarias":
+                        # Extraemos palabras clave potenciales de la petición del usuario (palabras > 3 letras)
+                        # Esto ayuda a que el filtro sea automático basándose en lo que el usuario pregunta
+                        palabras_peticion = [p for p in peticion_concreta.split() if len(p) > 3]
+                        
+                        if palabras_peticion:
+                            # Filtramos por la columna 'palabras clave' (Columna 5)
+                            # Usamos la primera palabra significativa para asegurar un filtro inicial
+                            filtro_keyword = palabras_peticion[0]
+                            query = query.ilike("palabras clave", f"%{filtro_keyword}%")
+                            st.info(f"Aplicando filtro previo en '{tabla}' por: **{filtro_keyword}**")
+                    
+                    # Ejecutamos la consulta (filtrada o completa según el caso)
+                    response = query.execute()
                     
                     if response.data:
                         contexto_encontrado.append({
@@ -164,7 +176,7 @@ if submitted:
                 st.error(f"Error Supabase: {e}")
                 st.stop()
 
-        # B) GENERACIÓN
+        # B) GENERACIÓN CON GEMINI
         with st.spinner(T["analyzing"]):
             try:
                 contexto_texto = json.dumps(contexto_encontrado, indent=2, ensure_ascii=False)
@@ -182,7 +194,7 @@ if submitted:
 
                 INSTRUCTIONS:
                 1. Answer the user's prompt based PRIMARILY on the provided JSON context. 
-                2. Explicitly cite or reference the specific sources/tables (e.g., Analectas, Mencio, Guiguzi) if they are relevant to your explanation.
+                2. Explicitly cite or reference the specific sources/tables (e.g., Analectas, Mencio, Guiguzi, Fuentes secundarias) if they are relevant to your explanation.
                 3. RESPONSE LANGUAGE: {idioma_salida}.
                 """
 
@@ -200,9 +212,7 @@ if submitted:
                     contenido=response_ai.text
                 )
                 
-                # Reducimos el prompt a unas pocas palabras para el nombre del archivo
                 nombre_archivo_corto = "_".join(peticion_concreta.split()[:3])
-                # Limpiamos caracteres que no sean alfanuméricos
                 nombre_archivo_seguro = "".join(c for c in nombre_archivo_corto if c.isalnum() or c == '_')
                 
                 st.download_button(
