@@ -4,6 +4,7 @@ import google.generativeai as genai
 import json
 import io 
 from docx import Document 
+import re # ¡Añadido para limpiar la puntuación del prompt!
 
 # --- 1. CONFIGURACIÓN Y DICCIONARIO DE IDIOMAS ---
 
@@ -132,7 +133,7 @@ with st.form("research_form"):
 
     submitted = st.form_submit_button(T["btn_analyze"])
 
-# --- 6. LÓGICA DEL BACKEND (CON FILTRADO POR COLUMNA 5) ---
+# --- 6. LÓGICA DEL BACKEND ---
 if submitted:
     if not peticion_concreta or not tablas_seleccionadas:
         st.warning(T["warn_input"])
@@ -146,16 +147,32 @@ if submitted:
                     
                     # --- MODIFICACIÓN ESPECÍFICA PARA FUENTES SECUNDARIAS ---
                     if tabla == "Fuentes secundarias":
-                        # Extraemos palabras clave potenciales de la petición del usuario (palabras > 3 letras)
-                        # Esto ayuda a que el filtro sea automático basándose en lo que el usuario pregunta
-                        palabras_peticion = [p for p in peticion_concreta.split() if len(p) > 3]
                         
-                        if palabras_peticion:
-                            # Filtramos por la columna 'palabras clave' (Columna 5)
-                            # Usamos la primera palabra significativa para asegurar un filtro inicial
-                            filtro_keyword = palabras_peticion[0]
-                            query = query.ilike("Palabras Clave", f"%{filtro_keyword}%")
-                            st.info(f"Aplicando filtro previo en '{tabla}' por: **{filtro_keyword}**")
+                        # 1. Limpiamos símbolos de interrogación y puntuación
+                        prompt_limpio = re.sub(r'[^\w\s]', '', peticion_concreta)
+                        
+                        # 2. Lista negra de "Stop Words" (palabras conversacionales a ignorar)
+                        palabras_basura = {
+                            "puedes", "podrias", "quiero", "necesito", "sobre", 
+                            "toda", "todo", "dime", "hazme", "resumir", "resumen", 
+                            "explicar", "analiza", "como", "para", "este", "esta", 
+                            "estos", "cual", "cuales", "quien", "quienes"
+                        }
+                        
+                        # 3. Extraemos palabras > 3 letras que NO estén en la lista negra
+                        keywords_usuario = [w for w in prompt_limpio.split() if len(w) > 3 and w.lower() not in palabras_basura]
+                        
+                        if keywords_usuario:
+                            # 4. Construimos un filtro OR dinámico
+                            # Usamos dobles comillas para el nombre exacto de la columna "Palabras Clave"
+                            condiciones_or = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in keywords_usuario])
+                            
+                            # Aplicamos el filtro OR a la consulta
+                            query = query.or_(condiciones_or)
+                            
+                            # Mostramos en la interfaz qué palabras estamos buscando realmente
+                            palabras_mostradas = ", ".join(keywords_usuario)
+                            st.info(f"Filtro inteligente activado en '{tabla}'. Buscando: **{palabras_mostradas}**")
                     
                     # Ejecutamos la consulta (filtrada o completa según el caso)
                     response = query.execute()
