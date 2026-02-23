@@ -154,7 +154,7 @@ if submitted:
                             # Filtramos por la columna 'palabras clave' (Columna 5)
                             # Usamos la primera palabra significativa para asegurar un filtro inicial
                             filtro_keyword = palabras_peticion[0]
-                            query = query.ilike("palabras clave", f"%{filtro_keyword}%")
+                            query = query.ilike("Palabras Clave", f"%{filtro_keyword}%")
                             st.info(f"Aplicando filtro previo en '{tabla}' por: **{filtro_keyword}**")
                     
                     # Ejecutamos la consulta (filtrada o completa según el caso)
