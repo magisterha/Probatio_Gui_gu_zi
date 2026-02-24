@@ -6,7 +6,7 @@ import io
 from docx import Document 
 import re 
 
-# --- 1. CONFIGURACIÓN Y DICCIONARIO DE IDIOMAS ---
+# --- 1. CONFIGURACIÓN Y DICCIONARIO DE IDIOMAS (ACTUALIZADO) ---
 
 TRANSLATIONS = {
     "Español": {
@@ -14,14 +14,16 @@ TRANSLATIONS = {
         "main_title": "🏯 Buscador de 訓詁 (Xùngǔ)",
         "desc": "Consulta múltiples fuentes clásicas y genera análisis con IA.",
         "db_select": "Bases de datos a consultar",
-        "input_req": "Prompt / Petición",
-        "input_req_placeholder": "Ej: Analiza el concepto de virtud en estos textos y compáralos...",
+        "input_req": "Prompt / Petición (Contexto para el análisis)",
+        "input_req_placeholder": "Ej: Analiza el concepto de virtud...",
+        "input_keywords": "Palabras Clave para búsqueda (separadas por comas)",
+        "input_keywords_placeholder": "Ej: Confucio, virtud, Ren",
         "resp_lang": "Idioma de la respuesta (IA)",
-        "btn_analyze": "🔍 Analizar con Gemini",
-        "warn_input": "Por favor, introduce un prompt y selecciona al menos una base de datos.",
-        "searching": "Extrayendo información de las fuentes seleccionadas...",
-        "error_not_found": "No se encontraron datos que coincidan con los criterios.",
-        "success_found": "¡Contexto filtrado y cargado correctamente!",
+        "btn_analyze": "🔍 Buscar y Analizar",
+        "warn_input": "Por favor, introduce el prompt, las palabras clave y selecciona una base de datos.",
+        "searching": "Buscando en Supabase...",
+        "error_not_found": "No se encontraron datos con esas palabras clave.",
+        "success_found": "¡Contexto recuperado correctamente!",
         "analyzing": "Consultando a Gemini 2.0 Flash...",
         "result_title": "📜 Resultado del Análisis",
         "source_title": "Ver datos JSON enviados a la IA",
@@ -35,12 +37,14 @@ TRANSLATIONS = {
         "desc": "查詢多種經典文獻並透過 AI 生成分析。",
         "db_select": "要查詢的資料庫",
         "input_req": "提示詞 / 具體要求",
-        "input_req_placeholder": "例如：分析這些文本中的美德概念並進行比較...",
+        "input_req_placeholder": "例如：分析這些文本中的美德概念...",
+        "input_keywords": "搜尋關鍵字 (用逗號隔開)",
+        "input_keywords_placeholder": "例如：孔子, 美德, 仁",
         "resp_lang": "回覆語言 (AI)",
-        "btn_analyze": "🔍 使用 Gemini 分析",
-        "warn_input": "請輸入提示詞，並選擇至少一個資料庫。",
-        "searching": "正在從所選來源提取資訊...",
-        "error_not_found": "在所選資料庫中找不到資料。",
+        "btn_analyze": "🔍 搜尋並分析",
+        "warn_input": "請輸入提示詞、關鍵字並選擇資料庫。",
+        "searching": "正在搜尋資料庫...",
+        "error_not_found": "找不到相符的資料。",
         "success_found": "成功載入上下文！",
         "analyzing": "正在諮詢 Gemini 2.0 Flash...",
         "result_title": "📜 分析結果",
@@ -52,15 +56,17 @@ TRANSLATIONS = {
     "English": {
         "page_title": "Xùngǔ Searcher",
         "main_title": "🏯 Xùngǔ Searcher (Exegesis)",
-        "desc": "Search multiple classical sources and generate AI exegesis analysis.",
+        "desc": "Search multiple classical sources and generate AI analysis.",
         "db_select": "Databases to query",
         "input_req": "Prompt / Request",
-        "input_req_placeholder": "E.g.: Analyze the concept of virtue in these texts and compare them...",
+        "input_req_placeholder": "E.g.: Analyze the concept of virtue...",
+        "input_keywords": "Search Keywords (separated by commas)",
+        "input_keywords_placeholder": "E.g.: Confucius, virtue, Ren",
         "resp_lang": "Response Language (AI)",
-        "btn_analyze": "🔍 Analyze with Gemini",
-        "warn_input": "Please enter a prompt and select at least one database.",
-        "searching": "Extracting information from selected sources...",
-        "error_not_found": "No data found in the selected databases.",
+        "btn_analyze": "🔍 Search & Analyze",
+        "warn_input": "Please enter prompt, keywords, and select a database.",
+        "searching": "Searching Supabase...",
+        "error_not_found": "No data found with those keywords.",
         "success_found": "Context loaded successfully!",
         "analyzing": "Consulting Gemini 2.0 Flash...",
         "result_title": "📜 Analysis Result",
@@ -73,12 +79,11 @@ TRANSLATIONS = {
 
 st.set_page_config(page_title="Sinología AI", layout="centered")
 
-# --- 2. SELECTOR DE IDIOMA (SIDEBAR) ---
+# --- 2. SELECTOR DE IDIOMA ---
 idiomas_disponibles = ["Español", "Traditional Chinese", "English"]
 lang_sel = st.sidebar.selectbox("Language / Idioma / 語言", idiomas_disponibles)
 T = TRANSLATIONS[lang_sel]
 
-# LISTA DE TABLAS DISPONIBLES EN SUPABASE
 TABLAS_DISPONIBLES = [
     "Glosas de 鬼谷子",
     "Analectas de Confucio",
@@ -107,7 +112,6 @@ def crear_word(titulo, subtitulo, contenido):
     doc.add_heading(titulo, 0)
     doc.add_heading(subtitulo, level=1)
     doc.add_paragraph(contenido)
-    
     bio = io.BytesIO()
     doc.save(bio)
     bio.seek(0)
@@ -124,7 +128,17 @@ with st.form("research_form"):
         default=[] 
     )
 
-    peticion_concreta = st.text_area(T["input_req"], placeholder=T["input_req_placeholder"], height=100)
+    # NUEVO: Campo para palabras clave manuales
+    keywords_manuales = st.text_input(
+        T["input_keywords"], 
+        placeholder=T["input_keywords_placeholder"]
+    )
+
+    peticion_concreta = st.text_area(
+        T["input_req"], 
+        placeholder=T["input_req_placeholder"], 
+        height=100
+    )
 
     idioma_salida = st.selectbox(
         T["resp_lang"],
@@ -135,43 +149,27 @@ with st.form("research_form"):
 
 # --- 6. LÓGICA DEL BACKEND ---
 if submitted:
-    if not peticion_concreta or not tablas_seleccionadas:
+    # Validamos que existan palabras clave además del prompt
+    if not peticion_concreta or not tablas_seleccionadas or not keywords_manuales:
         st.warning(T["warn_input"])
     else:
         with st.spinner(T["searching"]):
             contexto_encontrado = []
+            
+            # Procesamos las palabras clave manuales
+            # Las separamos por comas y limpiamos espacios
+            lista_keywords = [k.strip() for k in keywords_manuales.split(",") if k.strip()]
+            
             try:
                 for tabla in tablas_seleccionadas:
-                    # Inicializamos la consulta base
                     query = supabase.table(tabla).select("*")
                     
-                    # --- IA ROUTER PARA FUENTES SECUNDARIAS ---
-                    if tabla == "Fuentes secundarias":
-                        st.info("🧠 IA Router analizando tu petición para extraer palabras clave...")
-                        
-                        prompt_extraccion = f"""
-                        Extrae un máximo de 3 palabras clave principales de esta petición para buscar en una base de datos académica. 
-                        Ignora verbos conversacionales (resumir, explicar, puedes, etc) y palabras vacías. 
-                        Devuelve SOLO las palabras clave separadas por comas, sin texto adicional, sin viñetas y sin comillas.
-                        Petición: "{peticion_concreta}"
-                        """
-                        
-                        modelo_rapido = genai.GenerativeModel('gemini-2.0-flash')
-                        respuesta_keys = modelo_rapido.generate_content(prompt_extraccion)
-                        
-                        claves_ia = [k.strip() for k in respuesta_keys.text.split(",") if k.strip()]
-                        
-                        if claves_ia:
-                            # Construimos el filtro OR dinámico con la columna "Palabras Clave"
-                            condiciones_or = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in claves_ia])
-                            query = query.or_(condiciones_or)
-                            
-                            palabras_mostradas = ", ".join(claves_ia)
-                            st.success(f"🎯 Búsqueda optimizada. Buscando en Supabase: **{palabras_mostradas}**")
-                        else:
-                            st.warning("⚠️ La IA no pudo extraer palabras clave claras. Se buscará en toda la base de datos.")
+                    # Aplicamos el filtro de palabras clave si existen
+                    if lista_keywords:
+                        # Buscamos en la columna "Palabras Clave" (asegúrate que se llame así en todas tus tablas)
+                        condiciones_or = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in lista_keywords])
+                        query = query.or_(condiciones_or)
                     
-                    # Ejecutamos la consulta
                     response = query.execute()
                     
                     if response.data:
@@ -184,58 +182,43 @@ if submitted:
                     st.error(T["error_not_found"])
                     st.stop()
                 
-                st.success(T["success_found"])
+                st.success(f"{T['success_found']} ({len(contexto_encontrado)} fuentes con resultados)")
                 
             except Exception as e:
                 st.error(f"Error Supabase: {e}")
                 st.stop()
 
-        # --- 7. GENERACIÓN CON GEMINI Y CITAS ESTRICTAS ---
+        # --- 7. GENERACIÓN CON GEMINI ---
         with st.spinner(T["analyzing"]):
             try:
                 contexto_texto = json.dumps(contexto_encontrado, indent=2, ensure_ascii=False)
 
                 prompt_final = f"""
-                Role: You are an Expert Sinologist specializing in classical Chinese texts, historiography, and 'Xungu' (Exegesis).
-                
-                USER PROMPT / TASK:
-                "{peticion_concreta}"
-
-                RETRIEVED CONTEXT FROM DATABASES:
+                Role: You are an Expert Sinologist specializing in classical Chinese texts and 'Xungu' (Exegesis).
+                USER PROMPT: "{peticion_concreta}"
+                RETRIEVED CONTEXT:
                 ```json
                 {contexto_texto}
                 ```
-
                 INSTRUCTIONS:
-                1. Answer the user's prompt based PRIMARILY on the provided JSON context. 
-                2. EXPLICIT CITATIONS REQUIRED: Every time you mention an author's argument, thesis, or data from the JSON, you MUST cite it.
-                3. HOW TO CITE: Look at the end of each JSON record for fields like "citation_chicago", "referencia_bibliografica", or "citation". You must use these exact strings to construct a "Bibliography" or "Referencias" section at the end of your response. 
-                4. IN-TEXT CITATIONS: Use parentheses to cite the author and year in the body of your text (e.g., "Como señala Pines (2013)..." or "El ritual es visto como domesticación (Puett, 2010)").
-                5. Do not invent information. If the answer is not in the JSON, state that you do not have enough data.
-                6. RESPONSE LANGUAGE: {idioma_salida}. Ensure the tone is academic, structured, and easy to read.
+                1. Answer based PRIMARILY on the provided JSON.
+                2. Use EXPLICIT CITATIONS (author, year) in the text.
+                3. Add a Bibliography at the end using the citation fields in the JSON.
+                4. RESPONSE LANGUAGE: {idioma_salida}.
                 """
 
                 model = genai.GenerativeModel('gemini-2.0-flash') 
                 response_ai = model.generate_content(prompt_final)
                 
-                # C) MOSTRAR RESULTADOS
                 st.markdown(f"### {T['result_title']}")
                 st.write(response_ai.text)
                 
-                # D) BOTÓN DE DESCARGA WORD
-                word_file = crear_word(
-                    titulo=T["main_title"], 
-                    subtitulo="Análisis Generado por IA", 
-                    contenido=response_ai.text
-                )
-                
-                nombre_archivo_corto = "_".join(peticion_concreta.split()[:3])
-                nombre_archivo_seguro = "".join(c for c in nombre_archivo_corto if c.isalnum() or c == '_')
-                
+                # BOTÓN DE DESCARGA
+                word_file = crear_word(T["main_title"], "Análisis de Fuentes", response_ai.text)
                 st.download_button(
                     label=T["btn_download_word"],
                     data=word_file,
-                    file_name=f"{T['filename_prefix']}_{nombre_archivo_seguro}.docx",
+                    file_name=f"{T['filename_prefix']}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
                 
