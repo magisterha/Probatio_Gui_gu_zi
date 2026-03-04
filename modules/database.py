@@ -3,8 +3,9 @@ from supabase import create_client, Client
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 
+@st.cache_resource
 def get_supabase_client() -> Client:
-    """Retorna el cliente de Supabase configurado."""
+    """Retorna el cliente de Supabase configurado. Usamos cache para optimizar conexiones."""
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
 # --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (SINOLOGÍA) ---
@@ -29,8 +30,6 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
             query = supabase.table(tabla).select("*")
             
             # Construimos el filtro OR para todas las palabras clave
-            # Buscamos en la columna 'Palabras Clave' (o la columna que contenga el texto)
-            # Nota: .ilike es case-insensitive
             condiciones = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in lista_keywords])
             
             response = query.or_(condiciones).execute()
@@ -41,7 +40,7 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
                     "resultados": response.data
                 })
         except Exception as e:
-            st.error(f"Error consultando la tabla {tabla}: {e}")
+            st.error(f"Error consultando la tabla {tabla}: {str(e)}")
             
     return contexto_encontrado
 
@@ -50,33 +49,58 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
 def get_user_projects(user_id):
     """Recupera todos los proyectos de un usuario."""
     supabase = get_supabase_client()
-    res = supabase.table("proyectos").select("*").eq("user_id", user_id).execute()
-    return res.data
+    try:
+        res = supabase.table("proyectos").select("*").eq("user_id", user_id).execute()
+        return res.data
+    except Exception as e:
+        st.error(f"Error al cargar los proyectos: {str(e)}")
+        return []
 
 def create_new_project(user_id, nombre_tesis):
     """Crea un nuevo registro de proyecto con estructura vacía."""
     supabase = get_supabase_client()
+    
+    # IMPORTANTE: Asegúrate de que las columnas en tu tabla de Supabase 
+    # se llamen EXACTAMENTE igual que las claves de este diccionario.
     nuevo_proy = {
         "user_id": user_id,
         "nombre": nombre_tesis,
-        "estructura": {},      # JSON vacío para la Fase B
-        "prompts_maestros": {}, # JSON vacío para la Fase C
-        "contenido_redactado": {} # JSON vacío para la Fase D
+        "estructura": {},          # Debe ser tipo JSON o JSONB en Supabase
+        "prompts_maestros": {},    # Debe ser tipo JSON o JSONB en Supabase
+        "contenido_redactado": {}  # Debe ser tipo JSON o JSONB en Supabase
     }
-    return supabase.table("proyectos").insert(nuevo_proy).execute()
+    
+    try:
+        return supabase.table("proyectos").insert(nuevo_proy).execute()
+    except Exception as e:
+        # Aquí capturamos el error para que Streamlit te diga exactamente qué falla en la base de datos
+        if hasattr(e, 'details'):
+            st.error(f"Detalles del error de Supabase: {e.details}")
+        elif hasattr(e, 'message'):
+            st.error(f"Mensaje de Supabase: {e.message}")
+        else:
+            st.error(f"Error de base de datos al crear proyecto: {str(e)}")
+        raise e  # Relanzamos la excepción para detener el flujo si es necesario
 
 def update_project_data(project_id, data_dict):
     """
     Actualiza cualquier campo del proyecto (estructura, prompts o contenido).
-    data_dict debe ser algo como {"estructura": {...}}
     """
     supabase = get_supabase_client()
-    return supabase.table("proyectos").update(data_dict).eq("id", project_id).execute()
+    try:
+        return supabase.table("proyectos").update(data_dict).eq("id", project_id).execute()
+    except Exception as e:
+        st.error(f"Error al actualizar los datos del proyecto: {str(e)}")
+        return None
 
 # --- 3. GESTIÓN DE PERFILES ---
 
 def get_user_profile(user_id):
     """Obtiene datos adicionales del investigador."""
     supabase = get_supabase_client()
-    res = supabase.table("perfiles").select("*").eq("id", user_id).single().execute()
-    return res.data
+    try:
+        res = supabase.table("perfiles").select("*").eq("id", user_id).single().execute()
+        return res.data
+    except Exception as e:
+        st.error(f"Error al obtener el perfil del usuario: {str(e)}")
+        return None
