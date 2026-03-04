@@ -87,7 +87,7 @@ def phase_b_structure():
     col1, col2 = st.columns(2)
     with col1:
         tablas = st.multiselect("Bases de datos de referencia:", 
-                                ["戰國策", "Xunzi", "Mencio", "Analectas", "Glosas 鬼谷子"])
+                                ["戰國策", "Xunzi", "Mencio", "Analectas","Fuentes secundarias",  "Glosas 鬼谷子"])
     with col2:
         kws = st.text_input("Palabras clave (separadas por comas)")
     
