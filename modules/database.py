@@ -45,50 +45,50 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
     return contexto_encontrado
 
 # --- 2. GESTIÓN DE PROYECTOS (TESIS / MONOGRAFÍAS) ---
+# ATENCIÓN: Ahora apuntamos a la tabla 'proyectos_a'
 
 def get_user_projects(user_id):
-    """Recupera todos los proyectos de un usuario."""
+    """Recupera todos los proyectos de un usuario desde la nueva tabla proyectos_a."""
     supabase = get_supabase_client()
     try:
-        res = supabase.table("proyectos").select("*").eq("user_id", user_id).execute()
+        res = supabase.table("proyectos_a").select("*").eq("user_id", user_id).execute()
         return res.data
     except Exception as e:
         st.error(f"Error al cargar los proyectos: {str(e)}")
         return []
 
 def create_new_project(user_id, nombre_tesis):
-    """Crea un nuevo registro de proyecto con estructura vacía."""
+    """Crea un nuevo registro de proyecto con estructura vacía en proyectos_a."""
     supabase = get_supabase_client()
     
-    # IMPORTANTE: Asegúrate de que las columnas en tu tabla de Supabase 
-    # se llamen EXACTAMENTE igual que las claves de este diccionario.
     nuevo_proy = {
         "user_id": user_id,
         "nombre": nombre_tesis,
-        "estructura": {},          # Debe ser tipo JSON o JSONB en Supabase
-        "prompts_maestros": {},    # Debe ser tipo JSON o JSONB en Supabase
-        "contenido_redactado": {}  # Debe ser tipo JSON o JSONB en Supabase
+        "estructura": {},          
+        "prompts_maestros": {},    
+        "contenido_redactado": {}  
     }
     
     try:
-        return supabase.table("proyectos").insert(nuevo_proy).execute()
+        return supabase.table("proyectos_a").insert(nuevo_proy).execute()
     except Exception as e:
-        # Aquí capturamos el error para que Streamlit te diga exactamente qué falla en la base de datos
-        if hasattr(e, 'details'):
-            st.error(f"Detalles del error de Supabase: {e.details}")
-        elif hasattr(e, 'message'):
-            st.error(f"Mensaje de Supabase: {e.message}")
-        else:
-            st.error(f"Error de base de datos al crear proyecto: {str(e)}")
-        raise e  # Relanzamos la excepción para detener el flujo si es necesario
+        # Extraemos el mensaje real de la API si existe
+        error_msg = str(e)
+        if hasattr(e, 'details') and e.details:
+            error_msg = f"{e.details}"
+        elif hasattr(e, 'message') and e.message:
+            error_msg = f"{e.message}"
+            
+        st.error(f"Fallo en la base de datos al insertar: {error_msg}")
+        raise e 
 
 def update_project_data(project_id, data_dict):
     """
-    Actualiza cualquier campo del proyecto (estructura, prompts o contenido).
+    Actualiza cualquier campo del proyecto en proyectos_a.
     """
     supabase = get_supabase_client()
     try:
-        return supabase.table("proyectos").update(data_dict).eq("id", project_id).execute()
+        return supabase.table("proyectos_a").update(data_dict).eq("id", project_id).execute()
     except Exception as e:
         st.error(f"Error al actualizar los datos del proyecto: {str(e)}")
         return None
