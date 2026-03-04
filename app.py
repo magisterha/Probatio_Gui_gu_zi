@@ -57,7 +57,7 @@ if "chat_history" not in st.session_state:
 
 # --- 3. BARRA LATERAL (AUTENTICACIÓN Y PROYECTOS) ---
 with st.sidebar:
-    st.title("🏯 Xùngǔ Architect")
+    st.title("Arquitectura de Tesis")
     
     if not st.session_state.user:
         st.subheader("Acceso Investigador")
