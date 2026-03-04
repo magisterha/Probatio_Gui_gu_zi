@@ -1,138 +1,192 @@
 import streamlit as st
-from supabase import create_client, Client
-import google.generativeai as genai
 import json
+from modules.database import (
+    search_research_data, 
+    get_user_projects, 
+    create_new_project, 
+    update_project_data
+)
+from modules.ai_engine import (
+    chat_with_ideas, 
+    generate_research_structure, 
+    create_master_prompt_for_section, 
+    execute_section_writing
+)
 
-# --- 1. CONFIGURACIÓN E INICIALIZACIÓN ---
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Investigador de Sinología AI", 
-    layout="wide", 
+    page_title="Investigador de Sinología AI",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Inicializar conexión a Supabase y Gemini
-try:
-    supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    model = genai.GenerativeModel('gemini-2.0-flash')
-except Exception as e:
-    st.error(f"Error de conexión: {e}")
-    st.stop()
+# Estilo CSS para que el output parezca una monografía y no un chat
+st.markdown("""
+    <style>
+    .document-box {
+        background-color: #f9f9f9;
+        padding: 40px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        font-family: 'Times New Roman', Times, serif;
+        line-height: 1.6;
+        color: #333;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- 2. GESTIÓN DEL ESTADO DE LA SESIÓN ---
-# Esto permite que la app "recuerde" en qué proyecto estás trabajando
+# --- 2. ESTADO DE LA SESIÓN ---
 if "user" not in st.session_state:
     st.session_state.user = None
 if "current_project" not in st.session_state:
     st.session_state.current_project = None
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = "Ideas"
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# --- 3. FUNCIONES DE APOYO (LÓGICA DE NEGOCIO) ---
-
-def render_sidebar_auth():
-    """Maneja el login y la selección de proyectos en la barra lateral."""
-    with st.sidebar:
-        st.title("🏯 Panel de Investigador")
-        
-        if not st.session_state.user:
-            st.subheader("Acceso")
-            with st.form("login_form"):
-                email = st.text_input("Correo electrónico")
-                password = st.text_input("Contraseña", type="password")
-                if st.form_submit_button("Entrar"):
-                    try:
-                        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                        st.session_state.user = res.user
-                        st.success("¡Bienvenido!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error("Error de acceso.")
-        else:
-            st.write(f"Conectado como: **{st.session_state.user.email}**")
-            
-            # Selector de Proyectos (de la tabla 'proyectos')
-            res = supabase.table("proyectos").select("*").eq("user_id", st.session_state.user.id).execute()
-            proyectos = res.data
-            
-            nombres_proy = [p['nombre'] for p in proyectos] if proyectos else []
-            proy_sel = st.selectbox("Mis Proyectos / Tesis", ["-- Nuevo Proyecto --"] + nombres_proy)
-            
-            if proy_sel == "-- Nuevo Proyecto --":
-                with st.expander("Crear Proyecto"):
-                    nuevo_nombre = st.text_input("Título de la Tesis/Monografía")
-                    if st.button("Crear"):
-                        # Insertar en Supabase
-                        new_p = {"nombre": nuevo_nombre, "user_id": st.session_state.user.id, "estructura": {}}
-                        supabase.table("proyectos").insert(new_p).execute()
-                        st.rerun()
-            else:
-                st.session_state.current_project = next(p for p in proyectos if p['nombre'] == proy_sel)
-
-            if st.button("Cerrar Sesión"):
-                st.session_state.user = None
-                st.rerun()
-
-# --- 4. COMPONENTES DE LAS FASES (UI) ---
-
-def phase_a_ideas():
-    st.header("1. Lluvia de Ideas y Conceptos")
-    st.markdown("Usa este chat para pivotar el tema de tu investigación.")
-    # (Aquí iría la lógica de chat que ya tenías)
-    st.chat_input("Escribe tu idea aquí...")
-
-def phase_b_structure():
-    st.header("2. Estructura de la Monografía")
-    # Filtros para evitar el "ruido"
-    col1, col2 = st.columns(2)
-    with col1:
-        tablas = st.multiselect("Bases de datos de referencia:", 
-                                ["戰國策", "Xunzi", "Mencio", "Analectas","Fuentes secundarias",  "Glosas 鬼谷子"])
-    with col2:
-        kws = st.text_input("Palabras clave (separadas por comas)")
-    
-    if st.button("Generar Índice Académico"):
-        st.info("La IA está analizando las fuentes para proponer capítulos...")
-        # Llamada a Gemini con rol de Metodólogo
-
-def phase_c_prompts():
-    st.header("3. Generador de Prompts Maestros")
-    if not st.session_state.current_project or not st.session_state.current_project.get('estructura'):
-        st.warning("Primero define la estructura en la Fase 2.")
-    else:
-        st.write("Configura las instrucciones para cada sección de tu tesis.")
-
-def phase_d_writing():
-    st.header("4. Redacción del Documento")
-    st.markdown("Aquí se genera el texto siguiendo el orden de una tesis doctoral.")
-    # El output aquí NO es chat, es un contenedor de texto limpio.
-    with st.container(border=True):
-        st.write("*El borrador aparecerá aquí conforme ejecutes los prompts maestros.*")
-
-# --- 5. CUERPO PRINCIPAL ---
-
-def main():
-    render_sidebar_auth()
+# --- 3. BARRA LATERAL (AUTH Y PROYECTOS) ---
+with st.sidebar:
+    st.title("🏯 Xùngǔ Architect")
+    st.info("Sede Académica: Pekín")
     
     if not st.session_state.user:
-        st.title("Bienvenido al Asistente de Investigación en Sinología")
-        st.info("Por favor, inicia sesión en la barra lateral para gestionar tus proyectos de investigación.")
-        return
-
-    if st.session_state.current_project:
-        st.title(f"PROYECTO: {st.session_state.current_project['nombre']}")
-        
-        # Tabs que replican la lógica de una tesis
-        tab_ideas, tab_struct, tab_prompts, tab_write = st.tabs([
-            "💡 Ideas", "🏗️ Estructura", "✍️ Prompts Maestros", "📜 Redacción"
-        ])
-
-        with tab_ideas: phase_a_ideas()
-        with tab_struct: phase_b_structure()
-        with tab_prompts: phase_c_prompts()
-        with tab_write: phase_d_writing()
+        st.subheader("Acceso Investigador")
+        with st.form("auth_form"):
+            email = st.text_input("Email")
+            pw = st.text_input("Password", type="password")
+            if st.form_submit_button("Entrar"):
+                # Aquí llamarías a supabase.auth.sign_in_with_password
+                # Para este ejemplo, simulamos el éxito:
+                st.session_state.user = {"id": "user_123", "email": email}
+                st.rerun()
     else:
-        st.warning("Selecciona un proyecto en la barra lateral para comenzar.")
+        st.write(f"Sesión: {st.session_state.user['email']}")
+        
+        # Gestión de Proyectos
+        proyectos = get_user_projects(st.session_state.user['id'])
+        nombres = [p['nombre'] for p in proyectos] if proyectos else []
+        
+        sel = st.selectbox("Seleccionar Proyecto", ["-- Nuevo --"] + nombres)
+        
+        if sel == "-- Nuevo --":
+            nuevo_n = st.text_input("Nombre de la nueva tesis")
+            if st.button("Crear Proyecto"):
+                create_new_project(st.session_state.user['id'], nuevo_n)
+                st.rerun()
+        else:
+            st.session_state.current_project = next(p for p in proyectos if p['nombre'] == sel)
+        
+        if st.button("Cerrar Sesión"):
+            st.session_state.user = None
+            st.session_state.current_project = None
+            st.rerun()
 
-if __name__ == "__main__":
-    main()
+# --- 4. CUERPO PRINCIPAL (LAS 4 FASES) ---
+
+if not st.session_state.user:
+    st.title("Plataforma de Investigación Avanzada")
+    st.warning("Inicia sesión para acceder a tus borradores de tesis.")
+elif not st.session_state.current_project:
+    st.title("Bienvenido")
+    st.info("Selecciona o crea un proyecto en la barra lateral para comenzar la investigación.")
+else:
+    st.title(f"Proyecto: {st.session_state.current_project['nombre']}")
+    
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "💡 A. Lluvia de Ideas", 
+        "🏗️ B. Estructura", 
+        "✍️ C. Prompts Maestros", 
+        "📜 D. Redacción Final"
+    ])
+
+    # --- FASE A: CHAT DE IDEAS ---
+    with tab1:
+        st.subheader("Exploración Conceptual")
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+        
+        if prompt := st.chat_input("Discute tus ideas sobre el proyecto..."):
+            st.session_state.chat_history.append({"role": "user", "content": prompt})
+            with st.chat_message("user"): st.write(prompt)
+            
+            with st.chat_message("assistant"):
+                res = chat_with_ideas(st.session_state.chat_history, prompt)
+                st.write(res)
+                st.session_state.chat_history.append({"role": "assistant", "content": res})
+
+    # --- FASE B: ESTRUCTURA ---
+    with tab2:
+        st.subheader("Generación de la Estructura de la Tesis")
+        col1, col2 = st.columns(2)
+        with col1:
+            tablas = st.multiselect("Bases de datos para este índice:", 
+                                    ["戰國策", "Xunzi", "Mencio", "JSON de investigación", "Glosas de 鬼谷子", "Fuentes secundarias", "Analectas de Confucio"])
+        with col2:
+            kws = st.text_input("Keywords para filtrar (coma-separadas)")
+        
+        enfoque = st.text_area("Enfoque metodológico")
+        
+        if st.button("Diseñar Estructura Académica"):
+            contexto = search_research_data(tablas, kws)
+            nueva_estructura = generate_research_structure(contexto, enfoque)
+            update_project_data(st.session_state.current_project['id'], {"estructura": nueva_estructura})
+            st.session_state.current_project['estructura'] = nueva_estructura
+            st.success("Estructura guardada correctamente.")
+            st.rerun()
+            
+        if st.session_state.current_project.get('estructura'):
+            st.json(st.session_state.current_project['estructura'])
+
+    # --- FASE C: PROMPTS MAESTROS ---
+    with tab3:
+        st.subheader("Configuración de Prompts de Redacción")
+        est = st.session_state.current_project.get('estructura')
+        if not est:
+            st.error("Crea una estructura en la Fase B primero.")
+        else:
+            for cap in est['capitulos']:
+                with st.expander(f"Capítulo {cap['nro']}: {cap['titulo']}"):
+                    if st.button(f"Generar Prompt Maestro para Cap {cap['nro']}"):
+                        pm = create_master_prompt_for_section(cap, "Contexto Global")
+                        # Guardar el prompt en el JSON de prompts del proyecto
+                        prompts_actuales = st.session_state.current_project.get('prompts_maestros') or {}
+                        prompts_actuales[str(cap['nro'])] = pm
+                        update_project_data(st.session_state.current_project['id'], {"prompts_maestros": prompts_actuales})
+                        st.session_state.current_project['prompts_maestros'] = prompts_actuales
+                    
+                    p_maestro = st.session_state.current_project.get('prompts_maestros', {}).get(str(cap['nro']), "")
+                    st.text_area("Prompt Maestro:", value=p_maestro, height=150, key=f"area_{cap['nro']}")
+
+    # --- FASE D: REDACCIÓN ---
+    with tab4:
+        st.subheader("Borrador de la Monografía")
+        prompts = st.session_state.current_project.get('prompts_maestros')
+        
+        if not prompts:
+            st.warning("No hay prompts maestros generados.")
+        else:
+            cap_sel = st.selectbox("Capítulo a redactar", [f"Cap {k}" for k in prompts.keys()])
+            nro_cap = cap_sel.split(" ")[1]
+            
+            if st.button(f"Ejecutar Redacción de {cap_sel}"):
+                with st.spinner("Redactando siguiendo lógica académica..."):
+                    # Aquí pasamos los filtros de nuevo para que la redacción use datos reales
+                    ctx_redaccion = search_research_data(["戰國策", "Xunzi", "Mencio", "Analectas"], "virtud, ritual") 
+                    texto = execute_section_writing(prompts[nro_cap], ctx_redaccion)
+                    
+                    # Guardar contenido
+                    cont_actual = st.session_state.current_project.get('contenido_redactado') or {}
+                    cont_actual[nro_cap] = texto
+                    update_project_data(st.session_state.current_project['id'], {"contenido_redactado": cont_actual})
+                    st.session_state.current_project['contenido_redactado'] = cont_actual
+
+            # VISUALIZACIÓN TIPO MONOGRAFÍA
+            st.divider()
+            documento = st.session_state.current_project.get('contenido_redactado', {})
+            if documento:
+                with st.container():
+                    st.markdown(f"<div class='document-box'>", unsafe_allow_html=True)
+                    for n, txt in sorted(documento.items()):
+                        st.markdown(f"### Capítulo {n}")
+                        st.write(txt)
+                    st.markdown("</div>", unsafe_allow_html=True)
