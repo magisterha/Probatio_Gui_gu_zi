@@ -204,11 +204,44 @@ else:
                     else:
                         st.error("Hubo un problema generando la estructura. Revisa los datos de entrada.")
             
-        # Mostrar la estructura actual si existe
+        # Mostrar y permitir la edición de la estructura actual si existe
         est = st.session_state.current_project.get('estructura')
+        
         if est and isinstance(est, dict):
             st.divider()
             st.markdown(f"### Índice Propuesto: {est.get('titulo_tesis', 'Sin Título')}")
+            
+            # --- SECCIÓN: EDICIÓN MANUAL ---
+            st.info("✏️ **Modo Edición:** Puedes modificar los títulos, objetivos o subpuntos directamente en la caja de texto inferior. Asegúrate de mantener el formato original (las comillas y corchetes).")
+            
+            # Convertimos el diccionario a un string con sangrías para que sea fácil de leer y editar
+            estructura_str = json.dumps(est, indent=4, ensure_ascii=False)
+            
+            nueva_estructura_str = st.text_area(
+                "Código de la Estructura:", 
+                value=estructura_str, 
+                height=350,
+                key="editor_estructura_b"
+            )
+            
+            if st.button("💾 Guardar Estructura Modificada"):
+                try:
+                    # Intentamos convertir el texto editado de vuelta a un diccionario de Python
+                    estructura_actualizada = json.loads(nueva_estructura_str)
+                    
+                    # Si es válido, lo guardamos en Supabase y en la sesión actual
+                    update_project_data(st.session_state.current_project['id'], {"estructura": estructura_actualizada})
+                    st.session_state.current_project['estructura'] = estructura_actualizada
+                    
+                    st.success("¡Los cambios en la estructura se han guardado correctamente!")
+                    st.rerun()
+                except json.JSONDecodeError:
+                    st.error("⚠️ Error de formato: Revisa que no hayas borrado accidentalmente alguna comilla (\"), coma (,) o llave ({}).")
+            
+            st.divider()
+            
+            # --- VISTA PREVIA VISUAL ---
+            st.markdown("#### Vista previa de los Capítulos:")
             for cap in est.get('capitulos', []):
                 with st.expander(f"Capítulo {cap.get('nro', '')}: {cap.get('titulo', '')}"):
                     st.write(f"**Objetivo:** {cap.get('objetivo', '')}")
@@ -295,7 +328,7 @@ else:
                 cap_sel = st.selectbox("Capítulo a redactar:", [f"Capítulo {k}" for k in cap_keys])
                 nro_cap = cap_sel.split(" ")[1]
                 
-                # NUEVO: Selección de la variante del prompt maestro
+                # Selección de la variante del prompt maestro
                 variantes_disponibles = prompts.get(nro_cap, [])
                 if isinstance(variantes_disponibles, str): variantes_disponibles = [variantes_disponibles]
                 
