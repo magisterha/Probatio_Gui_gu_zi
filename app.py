@@ -204,49 +204,64 @@ else:
                     else:
                         st.error("Hubo un problema generando la estructura. Revisa los datos de entrada.")
             
-        # Mostrar y permitir la edición de la estructura actual si existe
+        # Mostrar y permitir la edición VISUAL de la estructura actual si existe
         est = st.session_state.current_project.get('estructura')
         
-        if est and isinstance(est, dict):
+        if est and isinstance(est, dict) and 'capitulos' in est:
             st.divider()
-            st.markdown(f"### Índice Propuesto: {est.get('titulo_tesis', 'Sin Título')}")
+            st.markdown("### ✏️ Editor Interactivo del Índice")
+            st.info("Despliega cada capítulo para modificar sus textos directamente. Separa los subpuntos usando saltos de línea (tecla Enter).")
             
-            # --- SECCIÓN: EDICIÓN MANUAL ---
-            st.info("✏️ **Modo Edición:** Puedes modificar los títulos, objetivos o subpuntos directamente en la caja de texto inferior. Asegúrate de mantener el formato original (las comillas y corchetes).")
-            
-            # Convertimos el diccionario a un string con sangrías para que sea fácil de leer y editar
-            estructura_str = json.dumps(est, indent=4, ensure_ascii=False)
-            
-            nueva_estructura_str = st.text_area(
-                "Código de la Estructura:", 
-                value=estructura_str, 
-                height=350,
-                key="editor_estructura_b"
-            )
-            
-            if st.button("💾 Guardar Estructura Modificada"):
-                try:
-                    # Intentamos convertir el texto editado de vuelta a un diccionario de Python
-                    estructura_actualizada = json.loads(nueva_estructura_str)
+            # Formulario interactivo para evitar que la página recargue con cada letra que escribes
+            with st.form("form_edicion_estructura"):
+                # Editar el título general
+                nuevo_titulo_tesis = st.text_input("Título General de la Tesis:", value=est.get('titulo_tesis', ''))
+                
+                capitulos_editados = []
+                
+                # Iterar sobre cada capítulo para crear su propio editor desplegable
+                for i, cap in enumerate(est.get('capitulos', [])):
+                    nro = cap.get('nro', i+1)
+                    with st.expander(f"Capítulo {nro}: {cap.get('titulo', 'Sin Título')}"):
+                        
+                        # Campos de edición
+                        edit_titulo = st.text_input(f"Título del Capítulo {nro}", value=cap.get('titulo', ''), key=f"titulo_{i}")
+                        edit_objetivo = st.text_area(f"Objetivo del Capítulo {nro}", value=cap.get('objetivo', ''), key=f"obj_{i}")
+                        
+                        # Convertimos la lista de subpuntos en un solo texto con saltos de línea para facilitar la edición
+                        subpuntos_actuales = "\n".join(cap.get('subpuntos', []))
+                        edit_subpuntos = st.text_area(
+                            f"Subpuntos (Escribe uno por línea)", 
+                            value=subpuntos_actuales, 
+                            height=150, 
+                            key=f"subs_{i}"
+                        )
+                        
+                        # Guardamos temporalmente los datos editados en la lista capitulos_editados
+                        capitulos_editados.append({
+                            "nro": nro,
+                            "titulo": edit_titulo,
+                            "objetivo": edit_objetivo,
+                            "subpuntos": [linea.strip() for linea in edit_subpuntos.split('\n') if linea.strip()] # Volvemos a convertir el texto en lista
+                        })
+
+                # Botón de guardado general para toda la estructura
+                boton_guardar = st.form_submit_button("💾 Guardar Estructura Completa", type="primary")
+                
+                if boton_guardar:
+                    # Construimos el diccionario final actualizado
+                    estructura_actualizada = {
+                        "titulo_tesis": nuevo_titulo_tesis,
+                        "introduccion": est.get('introduccion', ''), # Mantenemos la intro original
+                        "capitulos": capitulos_editados
+                    }
                     
-                    # Si es válido, lo guardamos en Supabase y en la sesión actual
+                    # Guardamos en Supabase y sesión
                     update_project_data(st.session_state.current_project['id'], {"estructura": estructura_actualizada})
                     st.session_state.current_project['estructura'] = estructura_actualizada
                     
-                    st.success("¡Los cambios en la estructura se han guardado correctamente!")
+                    st.success("¡El índice modificado se ha guardado correctamente!")
                     st.rerun()
-                except json.JSONDecodeError:
-                    st.error("⚠️ Error de formato: Revisa que no hayas borrado accidentalmente alguna comilla (\"), coma (,) o llave ({}).")
-            
-            st.divider()
-            
-            # --- VISTA PREVIA VISUAL ---
-            st.markdown("#### Vista previa de los Capítulos:")
-            for cap in est.get('capitulos', []):
-                with st.expander(f"Capítulo {cap.get('nro', '')}: {cap.get('titulo', '')}"):
-                    st.write(f"**Objetivo:** {cap.get('objetivo', '')}")
-                    for sub in cap.get('subpuntos', []):
-                        st.markdown(f"- {sub}")
 
     # --- FASE C: PROMPTS MAESTROS ---
     with tab3:
