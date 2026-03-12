@@ -3,7 +3,6 @@ from supabase import create_client, Client
 import json
 
 # Importaciones de nuestros módulos personalizados (Backend)
-# Asegúrate de tener los archivos modules/database.py y modules/ai_engine.py creados
 from modules.database import (
     search_research_data, 
     get_user_projects, 
@@ -224,24 +223,61 @@ else:
         if not est or not isinstance(est, dict) or 'capitulos' not in est:
             st.warning("⚠️ Necesitas generar y guardar una estructura en la Fase B antes de crear los prompts.")
         else:
-            st.markdown("Genera las instrucciones específicas que guiarán a la IA en la redacción de cada sección.")
+            st.markdown("Genera múltiples instrucciones para cada capítulo consultando tus **Fuentes Secundarias** para obtener mejores propuestas de investigación.")
             for cap in est['capitulos']:
-                with st.expander(f"Configuración: Capítulo {cap['nro']}"):
-                    if st.button(f"Generar Prompt para Cap. {cap['nro']}", key=f"btn_p_{cap['nro']}"):
-                        with st.spinner("Diseñando instrucciones maestras..."):
-                            pm = create_master_prompt_for_section(cap, "Contexto Sinológico")
+                cap_id = str(cap['nro'])
+                with st.expander(f"Configuración: Capítulo {cap_id} - {cap['titulo']}"):
+                    
+                    # 1. Input para buscar en la base de datos antes de generar el prompt
+                    kws_secundarias = st.text_input(
+                        f"Palabras clave para consultar Fuentes Secundarias (Cap. {cap_id}):", 
+                        value=cap.get('titulo', ''), 
+                        key=f"kw_sec_{cap_id}"
+                    )
+                    
+                    # 2. Botón para generar una NUEVA variante de prompt
+                    if st.button(f"➕ Generar variante de Prompt (Cap. {cap_id})", key=f"btn_p_{cap_id}"):
+                        with st.spinner("Consultando literatura secundaria y diseñando instrucciones..."):
+                            # Consultamos la BD usando la función importada en el backend
+                            ctx_secundario = search_research_data(["Fuentes secundarias"], kws_secundarias)
                             
-                            # Actualizar JSON de prompts
+                            # Generamos el prompt enriquecido
+                            pm = create_master_prompt_for_section(cap, ctx_secundario)
+                            
+                            # Lógica para guardar múltiples prompts (como lista)
                             prompts_actuales = st.session_state.current_project.get('prompts_maestros') or {}
-                            prompts_actuales[str(cap['nro'])] = pm
+                            
+                            # Retrocompatibilidad: Si antes era un string, lo convertimos a lista
+                            if cap_id in prompts_actuales and isinstance(prompts_actuales[cap_id], str):
+                                prompts_actuales[cap_id] = [prompts_actuales[cap_id]]
+                            elif cap_id not in prompts_actuales:
+                                prompts_actuales[cap_id] = []
+                                
+                            prompts_actuales[cap_id].append(pm)
+                            
+                            # Guardamos en base de datos y sesión
                             update_project_data(st.session_state.current_project['id'], {"prompts_maestros": prompts_actuales})
                             st.session_state.current_project['prompts_maestros'] = prompts_actuales
                             st.rerun()
                     
-                    # Mostrar el prompt actual editable
-                    p_actual = st.session_state.current_project.get('prompts_maestros', {}).get(str(cap['nro']), "")
-                    if p_actual:
-                        st.text_area("Prompt (Puedes editarlo manualmente):", value=p_actual, height=200, key=f"txt_p_{cap['nro']}")
+                    # 3. Mostrar y editar los prompts generados
+                    prompts_lista = st.session_state.current_project.get('prompts_maestros', {}).get(cap_id, [])
+                    if isinstance(prompts_lista, str): prompts_lista = [prompts_lista] # Retrocompatibilidad
+                    
+                    if prompts_lista:
+                        st.markdown("#### Variantes generadas:")
+                        for i, p_actual in enumerate(prompts_lista):
+                            # Permitir edición de cada variante
+                            nuevo_texto = st.text_area(f"Variante {i+1}:", value=p_actual, height=200, key=f"txt_p_{cap_id}_{i}")
+                            prompts_lista[i] = nuevo_texto
+                            
+                        # Botón para guardar las ediciones manuales
+                        if st.button(f"💾 Guardar ediciones manuales (Cap. {cap_id})", key=f"save_p_{cap_id}"):
+                            prompts_actuales = st.session_state.current_project.get('prompts_maestros') or {}
+                            prompts_actuales[cap_id] = prompts_lista
+                            update_project_data(st.session_state.current_project['id'], {"prompts_maestros": prompts_actuales})
+                            st.session_state.current_project['prompts_maestros'] = prompts_actuales
+                            st.success("Cambios guardados.")
 
     # --- FASE D: REDACCIÓN FINAL ---
     with tab4:
@@ -251,13 +287,27 @@ else:
         if not prompts:
             st.warning("⚠️ No hay prompts maestros generados. Ve a la Fase C.")
         else:
-            st.markdown("Selecciona un capítulo y las fuentes de base de datos que la IA debe leer estrictamente para redactarlo.")
+            st.markdown("Selecciona un capítulo, la variante de prompt que deseas usar y las fuentes que la IA debe leer estrictamente.")
             
             col_a, col_b = st.columns(2)
             with col_a:
                 cap_keys = list(prompts.keys())
                 cap_sel = st.selectbox("Capítulo a redactar:", [f"Capítulo {k}" for k in cap_keys])
                 nro_cap = cap_sel.split(" ")[1]
+                
+                # NUEVO: Selección de la variante del prompt maestro
+                variantes_disponibles = prompts.get(nro_cap, [])
+                if isinstance(variantes_disponibles, str): variantes_disponibles = [variantes_disponibles]
+                
+                if variantes_disponibles:
+                    opciones_var = [f"Variante {i+1}" for i in range(len(variantes_disponibles))]
+                    var_sel = st.selectbox("Prompt maestro a utilizar:", opciones_var)
+                    idx_var = opciones_var.index(var_sel)
+                    prompt_seleccionado = variantes_disponibles[idx_var]
+                else:
+                    prompt_seleccionado = None
+                    st.error("No hay prompts generados para este capítulo.")
+
             with col_b:
                 tablas_d = st.multiselect(
                     "Bases de datos para este capítulo específico:", 
@@ -267,12 +317,15 @@ else:
                 kws_d = st.text_input("Keywords para la redacción:", key="kws_d")
             
             if st.button(f"Ejecutar Redacción Académica ({cap_sel})", type="primary"):
-                if not tablas_d or not kws_d.strip():
+                if not prompt_seleccionado:
+                    st.error("Debes generar al menos una variante de prompt en la Fase C.")
+                elif not tablas_d or not kws_d.strip():
                     st.error("Por favor, selecciona al menos una base de datos y palabras clave para fundamentar el texto.")
                 else:
                     with st.spinner("Redactando siguiendo lógica de monografía (sin formato chat)..."):
                         ctx_redaccion = search_research_data(tablas_d, kws_d) 
-                        texto = execute_section_writing(prompts[nro_cap], ctx_redaccion)
+                        # Usamos la variante específica seleccionada
+                        texto = execute_section_writing(prompt_seleccionado, ctx_redaccion)
                         
                         cont_actual = st.session_state.current_project.get('contenido_redactado') or {}
                         cont_actual[nro_cap] = texto
