@@ -60,22 +60,33 @@ def generate_research_structure(contexto_data, enfoque_usuario):
     return json.loads(clean_json)
 
 # --- FASE C: GENERADOR DE PROMPTS MAESTROS ---
-def create_master_prompt_for_section(capitulo, contexto_global):
+def create_master_prompt_for_section(capitulo, contexto_secundario):
     model = get_model()
     
+    # Formateamos el contexto secundario si existe
+    if contexto_secundario:
+        contexto_str = json.dumps(contexto_secundario, indent=2, ensure_ascii=False)
+    else:
+        contexto_str = "No se encontraron fuentes secundarias previas. Basa tu propuesta en el conocimiento general de la disciplina."
+    
     prompt = f"""
-    Eres un Ingeniero de Prompts Académicos. 
+    Eres un Ingeniero de Prompts Académicos experto en Sinología. 
     Tengo un capítulo de tesis titulado: "{capitulo['titulo']}".
     Su objetivo es: "{capitulo['objetivo']}".
     
-    Genera un 'Prompt Maestro' detallado para que otra IA redacte este capítulo.
-    El prompt debe incluir:
-    1. Instrucciones de tono (académico, formal).
-    2. Uso obligatorio de fuentes citadas en el contexto.
-    3. Referencias a la exégesis (Xùngǔ).
-    4. Estructura de párrafos.
+    REVISIÓN DE FUENTES SECUNDARIAS (Estado de la cuestión):
+    {contexto_str}
     
-    Devuelve solo el texto del prompt maestro.
+    TAREA:
+    Basándote en estas fuentes secundarias, identifica debates, vacíos o enfoques interesantes y genera UN 'Prompt Maestro' detallado para que otra IA redacte este capítulo.
+    
+    El prompt resultante debe exigir a la IA redactora lo siguiente:
+    1. Un tono académico y formal.
+    2. Explorar las propuestas de investigación derivadas de las fuentes secundarias mostradas.
+    3. Referencias a la exégesis (Xùngǔ) si aplica.
+    4. Una estructura de párrafos coherente para una monografía.
+    
+    Devuelve estrictamente solo el texto del prompt maestro listo para usarse. Usa 'Pekín' si aplica.
     """
     
     response = model.generate_content(prompt)
