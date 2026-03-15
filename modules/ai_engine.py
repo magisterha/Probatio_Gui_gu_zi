@@ -1,184 +1,106 @@
 import google.generativeai as genai
-import streamlit as st
 import json
 import re
 
-# --- CONFIGURACIÓN E UTILIDADES ---
+def get_model():
+    return genai.GenerativeModel('gemini-2.0-flash')
 
-def get_model(system_instruction=None):
-    """
-    Configura y devuelve el modelo Gemini. 
-    Se recomienda pasar la instrucción de sistema aquí para mayor consistencia.
-    """
-    return genai.GenerativeModel(
-        model_name='gemini-2.0-flash',
-        system_instruction=system_instruction
-    )
-
-def extract_json(text):
-    """
-    Limpia el texto de la IA y extrae el objeto JSON de forma robusta.
-    """
-    try:
-        # Busca el contenido entre las primeras y últimas llaves
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            clean_json = match.group(0)
-            return json.loads(clean_json)
-        return json.loads(text)
-    except (json.JSONDecodeError, AttributeError) as e:
-        st.error(f"Error al procesar el formato JSON: {e}")
-        return None
-
-# --- FASE A: IDEAS (CHAT CONVERSACIONAL) ---
-
-def chat_with_ideas(history, user_input):
-    """
-    Gestiona la conversación del tutor de tesis.
-    'history' debe provenir de st.session_state.messages en formato Gemini.
-    """
+# --- FASE A: IDEAS Y EXTRACCIÓN DE FICHAS ---
+def chat_with_ideas(messages, user_input):
+    model = get_model()
     system_instruction = (
-        "Eres un tutor de tesis experto en Sinología. Ayudas al usuario a pivotar ideas, "
-        "encontrar vacíos de investigación y definir conceptos de Xùngǔ. "
-        "Sé ingenioso y académico. No uses un tono genérico."
+        "Eres un tutor de tesis experto en Sinología. Ayudas al usuario a pivotar ideas. "
+        "Usa siempre 'Pekín' con acento. Sé académico."
     )
-    model = get_model(system_instruction)
-    
-    # El chat de Gemini mantiene el estado si le pasamos el historial
-    chat = model.start_chat(history=history)
-    response = chat.send_message(user_input)
+    chat = model.start_chat(history=[])
+    response = chat.send_message(f"{system_instruction}\n\nUsuario dice: {user_input}")
     return response.text
 
-# --- FASE B: GENERADOR DE ESTRUCTURA (JSON) ---
+def extraer_ficha_de_idea(texto_idea):
+    model = get_model()
+    prompt = f"Resume la siguiente idea de investigación en un concepto clave de máximo 3 líneas para una ficha de trabajo:\n\n{texto_idea}"
+    return model.generate_content(prompt).text
 
-def generate_research_structure(contexto_data, enfoque_usuario):
-    """
-    Crea la estructura de la tesis basada en datos de Supabase.
-    """
-    system_instr = "Eres un Decano de Investigación especializado en estudios clásicos chinos."
-    model = get_model(system_instr)
-    
-    contexto_str = json.dumps(contexto_data, indent=2, ensure_ascii=False)
+# --- FASE B: SÍNTESIS DE ÍNDICE DESDE FICHAS ---
+def generar_indice_desde_fichas(fichas_categorizadas):
+    model = get_model()
+    fichas_str = json.dumps(fichas_categorizadas, indent=2, ensure_ascii=False)
     
     prompt = f"""
-    Basándote en los siguientes DATOS DE SUPABASE:
-    {contexto_str}
-    
-    Y en este ENFOQUE DEL USUARIO: "{enfoque_usuario}"
+    Eres un Decano de Investigación. Revisa estas notas y fichas organizadas por el investigador:
+    {fichas_str}
     
     TAREA:
-    Diseña una estructura de monografía doctoral. 
-    Responde EXCLUSIVAMENTE con un objeto JSON con este formato exacto:
+    Crea un Índice de Tesis estructurado que dé sentido a estas notas.
+    Responde EXCLUSIVAMENTE con un JSON:
     {{
       "titulo_tesis": "Título sugerido",
-      "introduccion": "Breve resumen del problema",
       "capitulos": [
         {{
           "nro": 1,
-          "titulo": "Título del capítulo",
-          "objetivo": "Qué se pretende demostrar",
-          "subpuntos": ["Punto A", "Punto B"]
+          "titulo": "Título",
+          "objetivo": "Objetivo",
+          "fichas_asociadas": ["ID de las fichas que encajan aquí"]
         }}
       ]
     }}
     """
     response = model.generate_content(prompt)
-    return extract_json(response.text)
+    clean_json = re.sub(r'```json|```', '', response.text).strip()
+    return json.loads(clean_json)
 
-# --- FASE C: GENERADOR DE PROMPTS MAESTROS ---
-
-def create_master_prompt_for_section(capitulo, contexto_secundario):
-    """
-    Genera un prompt directivo para un capítulo específico.
-    """
+# --- FASE D: EVALUADOR Y REFINADOR DE PROMPTS (FUSIÓN) ---
+def evaluar_y_crear_prompt_inteligente(capitulo, notas_texto):
     model = get_model()
     
-    contexto_str = json.dumps(contexto_secundario, indent=2, ensure_ascii=False) if contexto_secundario else "Usa conocimiento general."
-    
     prompt = f"""
-    Eres un Ingeniero de Prompts Académicos experto en Sinología. 
-    Capítulo: "{capitulo['titulo']}"
-    Objetivo: "{capitulo['objetivo']}"
-    Fuentes Secundarias: {contexto_str}
+    Eres un Director de Tesis evaluando el material para el Capítulo: "{capitulo['titulo']}".
+    Objetivo del capítulo: {capitulo['objetivo']}
     
-    TAREA: Genera UN 'Prompt Maestro' directivo para redactar este capítulo. 
-    El prompt debe exigir: tono formal, exégesis (Xùngǔ) y citas del contexto.
-    Devuelve solo el texto del prompt.
-    """
-    response = model.generate_content(prompt)
-    return response.text
-
-# --- FASE D: REFINADOR DE PROMPTS ---
-
-def refine_prompt_into_subprompts(capitulo, master_prompt, contexto_rag):
-    """
-    Divide el prompt maestro en subtareas para redacción profunda.
-    """
-    model = get_model("Eres un Arquitecto de Prompts experto.")
+    NOTAS DEL INVESTIGADOR RECOPILADAS PARA ESTE CAPÍTULO:
+    {notas_texto if notas_texto else "Ninguna nota asociada."}
     
-    contexto_str = json.dumps(contexto_rag, indent=2, ensure_ascii=False) if contexto_rag else "Sin contexto adicional."
-    subpuntos_str = "\n".join([f"- {sp}" for sp in capitulo.get('subpuntos', [])])
+    TAREA:
+    1. Evalúa si las notas aportadas son suficientes para redactar el capítulo completo.
+    2. Genera un Prompt Maestro para la IA redactora.
     
-    prompt = f"""
-    CAPÍTULO: {capitulo['titulo']}
-    SUBPUNTOS: {subpuntos_str}
-    PROMPT MAESTRO: {master_prompt}
-    CONTEXTO RAG: {contexto_str}
+    REGLAS DEL PROMPT A GENERAR:
+    - Si las notas son suficientes: El prompt debe instruir ESTRICTAMENTE a la IA redactora a "Dar coherencia estilística y académica a las notas aportadas SIN inventar información nueva".
+    - Si las notas son insuficientes o vacías: El prompt debe instruir a la IA a "Redactar el capítulo expandiendo la información, buscando contexto general y desarrollando argumentos para cubrir el vacío".
     
-    TAREA: Divide el trabajo en una serie secuencial de sub-prompts (Intro, Subpuntos, Conclusión).
-    Cada sub-prompt debe pedir desarrollo profundo (3-4 páginas).
-    Responde EXCLUSIVAMENTE en JSON:
-    {{ "sub_prompts": ["...", "...", "..."] }}
+    Devuelve EXCLUSIVAMENTE el texto del prompt generado, listo para usar.
     """
-    response = model.generate_content(prompt)
-    return extract_json(response.text)
+    return model.generate_content(prompt).text
 
-# --- FASE E: EJECUCIÓN (REDACCIÓN FINAL) ---
-
-def execute_section_writing(prompt_especifico, research_context):
-    """
-    Produce el contenido académico final.
-    """
+# --- FASE E: REDACCIÓN FINAL Y BIBLIOGRAFÍA ---
+def execute_final_writing(prompt_maestro, notas_texto, idioma, estilo, estilo_citacion):
     model = get_model()
-    contexto_str = json.dumps(research_context, indent=2, ensure_ascii=False)
     
     prompt_final = f"""
-    INSTRUCCIÓN ESPECÍFICA: {prompt_especifico}
-    CONTEXTO DE INVESTIGACIÓN: {contexto_str}
+    INSTRUCCIÓN MAESTRA:
+    {prompt_maestro}
     
-    REGLA DE ORO: No saludes. Escribe directamente el contenido denso, académico y profundo en español.
+    MATERIAL BASE (NOTAS):
+    {notas_texto}
+    
+    REQUISITOS DE FORMATO:
+    - Idioma de redacción: {idioma}
+    - Notas de estilo: {estilo if estilo else "Académico formal estándar"}
+    - Estilo de Citación: {estilo_citacion}
+    
+    TAREA:
+    Redacta el contenido del capítulo. NO saludes. Escribe directamente el texto académico.
     """
-    response = model.generate_content(prompt_final)
-    return response.text
+    return model.generate_content(prompt_final).text
 
-# --- EJEMPLO DE INTEGRACIÓN EN STREAMLIT ---
-
-def main():
-    st.title("Asistente de Tesis en Sinología")
-
-    # Inicializar historial de chat si no existe
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # Interfaz de Chat (Fase A)
-    user_input = st.chat_input("Discute tus ideas de tesis aquí...")
-    if user_input:
-        # Mostrar mensaje del usuario
-        st.chat_message("user").write(user_input)
-        
-        # Obtener respuesta del tutor
-        # Nota: Gemini espera una lista de objetos con 'role' y 'parts'
-        history_gemini = [
-            {"role": m["role"], "parts": [m["content"]]} 
-            for m in st.session_state.messages
-        ]
-        
-        respuesta = chat_with_ideas(history_gemini, user_input)
-        
-        # Guardar y mostrar
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        st.session_state.messages.append({"role": "model", "content": respuesta})
-        st.chat_message("assistant").write(respuesta)
-
-if __name__ == "__main__":
-    main()
+def generar_bibliografia_global(contenido_completo, estilo_citacion):
+    model = get_model()
+    prompt = f"""
+    Lee la siguiente tesis completa y extrae/genera una lista bibliográfica en formato {estilo_citacion} de todos los autores, obras clásicas (ej. Analectas, Mencio) y conceptos mencionados.
+    
+    TESIS:
+    {contenido_completo}
+    
+    Devuelve SOLO la bibliografía formateada.
+    """
+    return model.generate_content(prompt).text
