@@ -45,10 +45,9 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
     return contexto_encontrado
 
 # --- 2. GESTIÓN DE PROYECTOS (TESIS / MONOGRAFÍAS) ---
-# ATENCIÓN: Ahora apuntamos a la tabla 'proyectos_a'
 
 def get_user_projects(user_id):
-    """Recupera todos los proyectos de un usuario desde la nueva tabla proyectos_a."""
+    """Recupera todos los proyectos de un usuario desde la tabla proyectos_a."""
     supabase = get_supabase_client()
     try:
         res = supabase.table("proyectos_a").select("*").eq("user_id", user_id).execute()
@@ -58,7 +57,7 @@ def get_user_projects(user_id):
         return []
 
 def create_new_project(user_id, nombre_tesis):
-    """Crea un nuevo registro de proyecto con estructura vacía en proyectos_a."""
+    """Crea un nuevo registro de proyecto inicializando todas las columnas de la V3."""
     supabase = get_supabase_client()
     
     nuevo_proy = {
@@ -66,7 +65,13 @@ def create_new_project(user_id, nombre_tesis):
         "nombre": nombre_tesis,
         "estructura": {},          
         "prompts_maestros": {},    
-        "contenido_redactado": {}  
+        "contenido_redactado": {},
+        # INICIALIZACIÓN DE LAS COLUMNAS NUEVAS PARA EVITAR ERRORES NULOS
+        "fichas": [],
+        "repositorio_indices": [],
+        "estructura_activa": {},
+        "prompts_inteligentes": {},
+        "bibliografia": ""
     }
     
     try:
@@ -84,14 +89,13 @@ def create_new_project(user_id, nombre_tesis):
 
 def update_project_data(project_id, data_dict):
     """
-    Actualiza cualquier campo del proyecto en proyectos_a.
+    Actualiza cualquier campo del proyecto en proyectos_a usando el ID del proyecto.
+    El manejo de errores se delega a app.py para evitar falsos positivos en la interfaz.
     """
     supabase = get_supabase_client()
-    try:
-        return supabase.table("proyectos_a").update(data_dict).eq("id", project_id).execute()
-    except Exception as e:
-        st.error(f"Error al actualizar los datos del proyecto: {str(e)}")
-        return None
+    # Se ejecuta directamente. Si hay error de esquema (ej. falta una columna), 
+    # Python lanzará la excepción y app.py la capturará mostrando el aviso rojo.
+    return supabase.table("proyectos_a").update(data_dict).eq("id", project_id).execute()
 
 # --- 3. GESTIÓN DE PERFILES ---
 
