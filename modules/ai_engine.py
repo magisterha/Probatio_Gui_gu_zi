@@ -31,20 +31,37 @@ def extraer_ficha_de_idea(texto_interaccion, estilo_citacion, contexto_rag=None)
     {ctx_str}
     
     TAREA:
-    Extrae la información en formato JSON estricto con las siguientes TRES claves:
-    1. "texto": El desarrollo académico de la idea (máx 5 líneas).
-    2. "cita_pie": La nota al pie formateada en estilo {estilo_citacion}.
-    3. "referencia_bib": La referencia bibliográfica completa en estilo {estilo_citacion}.
+    Extrae la información y devuélvela EXACTAMENTE con esta estructura de claves JSON:
+    {{
+        "texto": "El desarrollo académico de la idea resumida en la interacción (máx 5 líneas).",
+        "cita_pie": "La nota al pie formateada en estilo {estilo_citacion}.",
+        "referencia_bib": "La referencia bibliográfica completa en estilo {estilo_citacion}."
+    }}
     
     Si no hay un libro específico en la interacción, intenta deducirlo del Contexto de Fuentes. Si es imposible, escribe "Referencia pendiente".
-    Responde EXCLUSIVAMENTE con el objeto JSON.
     """
-    response = model.generate_content(prompt)
-    clean_json = re.sub(r'```json|```', '', response.text).strip()
     try:
-        return json.loads(clean_json)
-    except json.JSONDecodeError:
-        return {"texto": response.text, "cita_pie": "Error de formato.", "referencia_bib": "Error de formato."}
+        # FORZAMOS A GEMINI A DEVOLVER JSON PURO Y ESTRICTO
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        datos = json.loads(response.text)
+        
+        # Filtros de seguridad por si la IA anida la respuesta
+        if isinstance(datos, list): datos = datos[0]
+        if "ficha" in datos: datos = datos["ficha"]
+        
+        # Convertimos todas las claves a minúsculas para que app.py siempre las encuentre
+        datos_seguros = {k.lower(): v for k, v in datos.items()}
+        
+        return {
+            "texto": datos_seguros.get("texto", response.text), # Si todo falla, guarda el texto crudo
+            "cita_pie": datos_seguros.get("cita_pie", "Sin cita"),
+            "referencia_bib": datos_seguros.get("referencia_bib", "Referencia pendiente")
+        }
+    except Exception as e:
+        return {"texto": f"Error de extracción de la IA. Mensaje original: {texto_interaccion}", "cita_pie": "Error", "referencia_bib": "Error"}
 
 def refinar_ficha_con_ia(texto_original, instruccion_usuario, estilo_citacion, contexto_rag=None):
     model = get_model()
@@ -59,15 +76,23 @@ def refinar_ficha_con_ia(texto_original, instruccion_usuario, estilo_citacion, c
     
     TAREA:
     1. Modifica la ficha para cumplir la instrucción. Mantén concisión (máx 6 líneas).
-    2. Devuelve los datos en JSON con: "texto", "cita_pie", "referencia_bib". Usa el estilo {estilo_citacion}.
-    Responde EXCLUSIVAMENTE con el objeto JSON.
+    2. Devuelve los datos EXACTAMENTE con esta estructura JSON:
+    {{
+        "texto": "El texto modificado y mejorado",
+        "cita_pie": "La cita al pie actualizada si aplica",
+        "referencia_bib": "La referencia actualizada si aplica"
+    }}
     """
-    response = model.generate_content(prompt)
-    clean_json = re.sub(r'```json|```', '', response.text).strip()
     try:
-        return json.loads(clean_json)
-    except json.JSONDecodeError:
-        return {"texto": response.text, "cita_pie": "Error al refinar cita.", "referencia_bib": "Error al refinar referencia."}
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        datos = json.loads(response.text)
+        datos_seguros = {k.lower(): v for k, v in datos.items()}
+        return datos_seguros
+    except Exception as e:
+        return {"texto": texto_original, "cita_pie": "Error al refinar", "referencia_bib": "Error al refinar"}
 
 # --- FASE B/C: SÍNTESIS DE ÍNDICE DESDE FICHAS ---
 def generar_indice_desde_fichas(fichas_categorizadas):
@@ -80,7 +105,7 @@ def generar_indice_desde_fichas(fichas_categorizadas):
     
     TAREA:
     Crea un Índice de Tesis estructurado que dé sentido a estas notas.
-    Responde EXCLUSIVAMENTE con un JSON con este formato exacto:
+    Devuelve los datos EXACTAMENTE con esta estructura JSON:
     {{
       "titulo_tesis": "Título sugerido",
       "capitulos": [
@@ -88,14 +113,19 @@ def generar_indice_desde_fichas(fichas_categorizadas):
           "nro": 1,
           "titulo": "Título",
           "objetivo": "Objetivo",
-          "fichas_asociadas": ["ID de las fichas que encajan aquí (usa los IDs del JSON proporcionado)"]
+          "fichas_asociadas": ["ID de las fichas que encajan aquí"]
         }}
       ]
     }}
     """
-    response = model.generate_content(prompt)
-    clean_json = re.sub(r'```json|```', '', response.text).strip()
-    return json.loads(clean_json)
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        return {"titulo_tesis": "Error al generar índice", "capitulos": []}
 
 # --- FASE D: EVALUADOR Y REFINADOR DE PROMPTS ---
 def evaluar_y_crear_prompt_inteligente(capitulo, notas_texto):
