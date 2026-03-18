@@ -9,7 +9,8 @@ from modules.ai_engine import (
     chat_with_ideas, extraer_ficha_de_idea, refinar_ficha_con_ia, generar_indice_desde_fichas, 
     evaluar_y_crear_prompt_inteligente, execute_final_writing, generar_bibliografia_global
 )
-from modules.utils import generar_documento_word
+# IMPORTANTE: Corregida la importación para apuntar a export_utils.py
+from modules.export_utils import generar_documento_word
 
 st.set_page_config(page_title="Investigador de Sinología AI", layout="wide")
 
