@@ -3,13 +3,13 @@ from supabase import create_client, Client
 import json
 import uuid
 
-# Backend modules
+# Módulos personalizados (Backend)
 from modules.database import search_research_data, get_user_projects, create_new_project, update_project_data
 from modules.ai_engine import (
     chat_with_ideas, extraer_ficha_de_idea, refinar_ficha_con_ia, generar_indice_desde_fichas, 
     evaluar_y_crear_prompt_inteligente, execute_final_writing, generar_bibliografia_global
 )
-from modules.export_utils import generar_documento_word
+from modules.utils import generar_documento_word
 
 st.set_page_config(page_title="Investigador de Sinología AI", layout="wide")
 
@@ -27,7 +27,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Session States
+# Estado de la Sesión
 if "user" not in st.session_state: st.session_state.user = None
 if "current_project" not in st.session_state: st.session_state.current_project = None
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
@@ -65,13 +65,23 @@ with st.sidebar:
             if st.session_state.current_project != p_seleccionado:
                 st.session_state.current_project = p_seleccionado
                 # Cargar fichas guardadas del proyecto
-                st.session_state.fichas = p_seleccionado.get('fichas', [])
+                st.session_state.fichas = p_seleccionado.get('fichas', []) or []
                 st.rerun()
         
         st.divider()
+        
+        # --- BOTÓN DE GUARDADO CON MANEJO DE ERRORES REAL ---
         if st.button("💾 Guardar Fichas en la Nube", type="primary"):
-            update_project_data(st.session_state.current_project['id'], {"fichas": st.session_state.fichas})
-            st.success("Progreso guardado.")
+            try:
+                # Intentamos actualizar la base de datos
+                respuesta = update_project_data(st.session_state.current_project['id'], {"fichas": st.session_state.fichas})
+                
+                if hasattr(respuesta, 'error') and respuesta.error:
+                    st.error(f"Error al guardar: {respuesta.error.message}")
+                else:
+                    st.success("Progreso guardado correctamente.")
+            except Exception as e:
+                st.error(f"⚠️ Error. Verifica que creaste la columna 'fichas' en Supabase. Detalles: {e}")
             
         if st.button("Cerrar Sesión"):
             supabase.auth.sign_out()
