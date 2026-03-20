@@ -9,7 +9,7 @@ from modules.ai_engine import (
     chat_with_ideas, extraer_ficha_de_idea, refinar_ficha_con_ia, generar_indice_desde_fichas, 
     evaluar_y_crear_prompt_inteligente, execute_final_writing, generar_bibliografia_global
 )
-# IMPORTANTE: Corregida la importación para apuntar a export_utils.py
+# IMPORTANTE: Importación correcta apuntando a export_utils.py
 from modules.export_utils import generar_documento_word
 
 st.set_page_config(page_title="Investigador de Sinología AI", layout="wide")
@@ -34,6 +34,8 @@ if "current_project" not in st.session_state: st.session_state.current_project =
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 if "fichas" not in st.session_state: st.session_state.fichas = []
 if "categorias" not in st.session_state: st.session_state.categorias = ["Ideas Generales", "Conceptos Xùngǔ", "Metodología", "Citas/Fuentes"]
+# NUEVO: Estado para rastrear qué chat estamos viendo en la Fase A
+if "active_chat_id" not in st.session_state: st.session_state.active_chat_id = None
 
 # --- BARRA LATERAL ---
 with st.sidebar:
@@ -67,6 +69,7 @@ with st.sidebar:
                 st.session_state.current_project = p_seleccionado
                 # Cargar fichas guardadas del proyecto
                 st.session_state.fichas = p_seleccionado.get('fichas', []) or []
+                st.session_state.active_chat_id = None # Reseteamos el chat al cambiar de proyecto
                 st.rerun()
         
         st.divider()
@@ -82,13 +85,14 @@ with st.sidebar:
                 else:
                     st.success("Progreso guardado correctamente.")
             except Exception as e:
-                st.error(f"⚠️ Error. Verifica que creaste la columna 'fichas' en Supabase. Detalles: {e}")
+                st.error(f"⚠️ Error. Verifica las columnas en Supabase. Detalles: {e}")
             
         if st.button("Cerrar Sesión"):
             supabase.auth.sign_out()
             st.session_state.user = None
             st.session_state.current_project = None
             st.session_state.fichas = []
+            st.session_state.active_chat_id = None
             st.rerun()
 
 if not st.session_state.current_project:
@@ -120,30 +124,86 @@ with tab1:
     col_inputs, col_tablero = st.columns([1, 1.2])
     
     with col_inputs:
-        subtab_chat, subtab_manual = st.tabs(["💬 Chat con IA", "✍️ Reflexión Manual"])
+        subtab_chat, subtab_manual = st.tabs(["💬 Entorno de Charla", "✍️ Reflexión Manual"])
         
         with subtab_chat:
-            st.markdown("Genera ideas dialogando con el tutor IA.")
+            # 1. SELECTOR DE CONVERSACIONES
+            st.markdown("**Conversación Activa:**")
+            opciones_chat = {"✨ Nueva Conversación (Creará ficha automática)": None}
+            for f in st.session_state.fichas:
+                # Mostramos los primeros 40 caracteres como título del chat
+                titulo_corto = f['texto'][:40] + "..." if len(f['texto']) > 40 else f['texto']
+                opciones_chat[f"📄 Ficha: {titulo_corto}"] = f['id']
+            
+            nombres_opciones = list(opciones_chat.keys())
+            ids_opciones = list(opciones_chat.values())
+            
+            idx_actual = 0
+            if st.session_state.active_chat_id in ids_opciones:
+                idx_actual = ids_opciones.index(st.session_state.active_chat_id)
+                
+            seleccion = st.selectbox("Selecciona un chat previo o inicia uno nuevo:", nombres_opciones, index=idx_actual, label_visibility="collapsed")
+            nuevo_id_activo = opciones_chat[seleccion]
+            
+            if nuevo_id_activo != st.session_state.active_chat_id:
+                st.session_state.active_chat_id = nuevo_id_activo
+                st.rerun()
+
+            # 2. CARGAR EL HISTORIAL DE LA FICHA ACTIVA
+            ficha_activa = None
+            historial_actual = []
+            if st.session_state.active_chat_id:
+                ficha_activa = next((f for f in st.session_state.fichas if f['id'] == st.session_state.active_chat_id), None)
+                if ficha_activa:
+                    historial_actual = ficha_activa.get("chat_history", [])
+            
+            # 3. CONTENEDOR DE CHAT
             chat_container = st.container(height=400)
             with chat_container:
-                for msg in st.session_state.chat_history:
+                for msg in historial_actual:
                     with st.chat_message(msg["role"]): st.write(msg["content"])
             
+            # 4. BOTÓN PARA ACTUALIZAR FICHA DESDE LA CONVERSACIÓN
+            if ficha_activa and len(historial_actual) > 0:
+                if st.button("🔄 Sintetizar/Actualizar Ficha con este chat", use_container_width=True):
+                    with st.spinner("Releyendo conversación y actualizando ficha..."):
+                        chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in historial_actual])
+                        ctx_rag = search_research_data(tablas_a, kws_a) if tablas_a else None
+                        nuevos_datos = extraer_ficha_de_idea(chat_text, estilo_citacion_a, ctx_rag)
+                        
+                        ficha_activa['texto'] = nuevos_datos.get("texto", ficha_activa['texto'])
+                        ficha_activa['cita_pie'] = nuevos_datos.get("cita_pie", ficha_activa.get('cita_pie', ''))
+                        ficha_activa['referencia_bib'] = nuevos_datos.get("referencia_bib", ficha_activa.get('referencia_bib', ''))
+                        st.success("¡Ficha actualizada!")
+                        st.rerun()
+
+            # 5. INPUT DEL USUARIO
             if prompt := st.chat_input("Discute ideas con la IA..."):
-                st.session_state.chat_history.append({"role": "user", "content": prompt})
-                with st.spinner("Consultando BD y procesando idea..."):
+                historial_actual.append({"role": "user", "content": prompt})
+                with st.spinner("Procesando..."):
                     contexto_rag_a = search_research_data(tablas_a, kws_a) if tablas_a else None
-                    res = chat_with_ideas(st.session_state.chat_history, prompt, contexto_rag_a)
-                    st.session_state.chat_history.append({"role": "assistant", "content": res})
+                    # Pasamos el historial previo
+                    res = chat_with_ideas(historial_actual[:-1], prompt, contexto_rag_a)
+                    historial_actual.append({"role": "assistant", "content": res})
                     
-                    datos_ficha = extraer_ficha_de_idea(prompt + " \n Asistente: " + res, estilo_citacion_a, contexto_rag_a)
-                    st.session_state.fichas.append({
-                        "id": str(uuid.uuid4())[:8], 
-                        "texto": datos_ficha.get("texto", "Texto no extraído"), 
-                        "cita_pie": datos_ficha.get("cita_pie", ""),
-                        "referencia_bib": datos_ficha.get("referencia_bib", ""),
-                        "categoria": "Ideas Generales"
-                    })
+                    if st.session_state.active_chat_id is None:
+                        # Si era un chat nuevo, creamos la ficha automáticamente
+                        chat_text = f"user: {prompt}\nassistant: {res}"
+                        datos_ficha = extraer_ficha_de_idea(chat_text, estilo_citacion_a, contexto_rag_a)
+                        nuevo_id = str(uuid.uuid4())[:8]
+                        st.session_state.fichas.append({
+                            "id": nuevo_id, 
+                            "texto": datos_ficha.get("texto", "Texto no extraído"), 
+                            "cita_pie": datos_ficha.get("cita_pie", ""),
+                            "referencia_bib": datos_ficha.get("referencia_bib", ""),
+                            "categoria": "Ideas Generales",
+                            "chat_history": historial_actual # GUARDAMOS EL HISTORIAL AQUÍ
+                        })
+                        st.session_state.active_chat_id = nuevo_id # El chat nuevo se vuelve el activo
+                    else:
+                        # Si ya estábamos en un chat, actualizamos su memoria interna
+                        ficha_activa['chat_history'] = historial_actual
+
                 st.rerun()
 
         with subtab_manual:
@@ -158,7 +218,8 @@ with tab1:
                     if txt_manual.strip():
                         st.session_state.fichas.append({
                             "id": str(uuid.uuid4())[:8], "texto": txt_manual, 
-                            "cita_pie": cita_manual, "referencia_bib": bib_manual, "categoria": cat_manual
+                            "cita_pie": cita_manual, "referencia_bib": bib_manual, "categoria": cat_manual,
+                            "chat_history": [] # Las manuales nacen con historial vacío
                         })
                         st.success("Reflexión añadida.")
                         st.rerun()
@@ -177,43 +238,47 @@ with tab1:
             fichas_cat = [f for f in st.session_state.fichas if f['categoria'] == cat]
             with st.expander(f"📁 {cat} ({len(fichas_cat)} fichas)", expanded=True):
                 for f in fichas_cat:
+                    # Comprobamos si es la ficha activa para resaltarla visualmente
+                    es_activa = f['id'] == st.session_state.active_chat_id
+                    borde_color = "#FF9800" if es_activa else "#4CAF50" # Naranja si estás chateando en ella
+                    
                     with st.container():
-                        st.markdown(f"<div class='ficha'><b>Nota:</b> {f['texto']}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='ficha' style='border-left: 4px solid {borde_color};'><b>Nota:</b> {f['texto']}</div>", unsafe_allow_html=True)
                         st.caption(f"📝 {f.get('cita_pie', 'Sin cita')}")
                         st.caption(f"📚 {f.get('referencia_bib', 'Sin bibliografía')}")
                         
-                        with st.expander("⚙️ Opciones de ficha"):
-                            # MOVER
-                            nueva_cat = st.selectbox("Mover ficha a:", st.session_state.categorias, index=st.session_state.categorias.index(cat), key=f"sel_{f['id']}")
-                            if nueva_cat != cat:
-                                f['categoria'] = nueva_cat
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.button("💬 Abrir en Chat", key=f"abrir_{f['id']}", use_container_width=True):
+                                st.session_state.active_chat_id = f['id']
                                 st.rerun()
-                            st.divider()
-                            # EDICIÓN MANUAL
-                            st.markdown("**✏️ Edición Manual**")
-                            e_txt = st.text_area("Texto:", f['texto'], key=f"etxt_{f['id']}")
-                            e_cit = st.text_input("Cita:", f.get('cita_pie', ''), key=f"ecit_{f['id']}")
-                            e_bib = st.text_input("Bib:", f.get('referencia_bib', ''), key=f"ebib_{f['id']}")
-                            if st.button("💾 Guardar Edición", key=f"save_{f['id']}"):
-                                f['texto'] = e_txt; f['cita_pie'] = e_cit; f['referencia_bib'] = e_bib
-                                st.rerun()
-                            st.divider()
-                            # REFINAMIENTO IA
-                            st.markdown("**✨ Refinar con IA**")
-                            instruccion = st.text_area("¿Qué debe mejorar la IA?", key=f"inst_{f['id']}")
-                            if st.button("Ejecutar Refinamiento", key=f"ref_{f['id']}"):
-                                if instruccion.strip():
-                                    with st.spinner("Refinando..."):
-                                        ctx_rag = search_research_data(tablas_a, kws_a) if tablas_a else None
-                                        mejora = refinar_ficha_con_ia(f['texto'], instruccion, estilo_citacion_a, ctx_rag)
-                                        f['texto'] = mejora.get("texto", f['texto'])
-                                        f['cita_pie'] = mejora.get("cita_pie", f.get('cita_pie', ''))
-                                        f['referencia_bib'] = mejora.get("referencia_bib", f.get('referencia_bib', ''))
-                                        st.rerun()
-                            # ELIMINAR
-                            if st.button("🗑️ Eliminar Ficha", key=f"del_{f['id']}"):
-                                st.session_state.fichas.remove(f)
-                                st.rerun()
+                        with col_btn2:
+                            with st.expander("⚙️ Opciones de ficha"):
+                                nueva_cat = st.selectbox("Mover ficha a:", st.session_state.categorias, index=st.session_state.categorias.index(cat), key=f"sel_{f['id']}")
+                                if nueva_cat != cat:
+                                    f['categoria'] = nueva_cat; st.rerun()
+                                st.divider()
+                                st.markdown("**✏️ Edición Manual**")
+                                e_txt = st.text_area("Texto:", f['texto'], key=f"etxt_{f['id']}")
+                                e_cit = st.text_input("Cita:", f.get('cita_pie', ''), key=f"ecit_{f['id']}")
+                                e_bib = st.text_input("Bib:", f.get('referencia_bib', ''), key=f"ebib_{f['id']}")
+                                if st.button("💾 Guardar Edición", key=f"save_{f['id']}"):
+                                    f['texto'] = e_txt; f['cita_pie'] = e_cit; f['referencia_bib'] = e_bib; st.rerun()
+                                st.divider()
+                                st.markdown("**✨ Refinar con IA**")
+                                instruccion = st.text_area("¿Qué debe mejorar la IA?", key=f"inst_{f['id']}")
+                                if st.button("Ejecutar Refinamiento", key=f"ref_{f['id']}"):
+                                    if instruccion.strip():
+                                        with st.spinner("Refinando..."):
+                                            ctx_rag = search_research_data(tablas_a, kws_a) if tablas_a else None
+                                            mejora = refinar_ficha_con_ia(f['texto'], instruccion, estilo_citacion_a, ctx_rag)
+                                            f['texto'] = mejora.get("texto", f['texto'])
+                                            f['cita_pie'] = mejora.get("cita_pie", f.get('cita_pie', ''))
+                                            f['referencia_bib'] = mejora.get("referencia_bib", f.get('referencia_bib', ''))
+                                            st.rerun()
+                                if st.button("🗑️ Eliminar Ficha", key=f"del_{f['id']}"):
+                                    if st.session_state.active_chat_id == f['id']: st.session_state.active_chat_id = None
+                                    st.session_state.fichas.remove(f); st.rerun()
                         st.markdown("---")
 
 # --- FASE B/C: ORGANIZADOR DE ÍNDICES Y REPOSITORIO ---
