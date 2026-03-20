@@ -8,23 +8,25 @@ def get_model():
 
 # --- FASE A: IDEAS Y EXTRACCIÓN DE FICHAS ESTRUCTURADAS ---
 def chat_with_ideas(messages, user_input, contexto_rag=None):
+    model = get_model()
     ctx_str = f"\n\nCONTEXTO DE BASES DE DATOS DE APOYO:\n{json.dumps(contexto_rag, ensure_ascii=False)}" if contexto_rag else ""
+    system_instruction = "Eres un tutor de tesis experto en Sinología. Ayudas al usuario a pivotar ideas. Usa siempre 'Pekín' con acento. Sé riguroso y académico." + ctx_str
     
-    # Declaramos las instrucciones del sistema en el propio modelo
-    model = genai.GenerativeModel(
-        'gemini-2.0-flash',
-        system_instruction="Eres un tutor de tesis experto en Sinología. Ayudas al usuario a pivotar ideas. Usa siempre 'Pekín' con acento. Sé riguroso y académico." + ctx_str
-    )
+    # SOLUCIÓN ANTI-CRASH: Concatenamos el historial en un solo bloque de texto continuo.
+    # Esto evita los bloqueos de la API por errores de "alternancia de roles".
+    prompt_completo = f"INSTRUCCIONES DEL SISTEMA:\n{system_instruction}\n\n--- HISTORIAL DE LA CONVERSACIÓN ---\n"
     
-    # Convertimos nuestro historial interno al formato estricto que pide la API de Gemini
-    historial_gemini = []
     for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        historial_gemini.append({"role": role, "parts": [msg["content"]]})
+        rol = "Investigador" if msg["role"] == "user" else "Tutor IA"
+        prompt_completo += f"**{rol}**: {msg['content']}\n\n"
         
-    chat = model.start_chat(history=historial_gemini) 
-    response = chat.send_message(user_input)
-    return response.text
+    prompt_completo += f"**Investigador**: {user_input}\n**Tutor IA**: "
+    
+    try:
+        response = model.generate_content(prompt_completo)
+        return response.text
+    except Exception as e:
+        return f"⚠️ Error en la conexión con la API de Gemini: {str(e)}"
 
 def extraer_ficha_de_idea(texto_interaccion, estilo_citacion, contexto_rag=None):
     model = get_model()
@@ -60,7 +62,7 @@ def extraer_ficha_de_idea(texto_interaccion, estilo_citacion, contexto_rag=None)
         if isinstance(datos, list): datos = datos[0]
         if "ficha" in datos: datos = datos["ficha"]
         
-        # Convertimos todas las claves a minúsculas para que app.py siempre las encuentre
+        # Convertimos todas las claves a minúsculas
         datos_seguros = {k.lower(): v for k, v in datos.items()}
         
         return {
