@@ -9,7 +9,6 @@ from modules.ai_engine import (
     chat_with_ideas, extraer_ficha_de_idea, refinar_ficha_con_ia, generar_indice_desde_fichas, 
     evaluar_y_crear_prompt_inteligente, execute_final_writing, generar_bibliografia_global
 )
-# IMPORTANTE: Importación correcta apuntando a export_utils.py
 from modules.export_utils import generar_documento_word
 
 st.set_page_config(page_title="Investigador de Sinología AI", layout="wide")
@@ -34,7 +33,7 @@ if "current_project" not in st.session_state: st.session_state.current_project =
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 if "fichas" not in st.session_state: st.session_state.fichas = []
 if "categorias" not in st.session_state: st.session_state.categorias = ["Ideas Generales", "Conceptos Xùngǔ", "Metodología", "Citas/Fuentes"]
-# NUEVO: Estado para rastrear qué chat estamos viendo en la Fase A
+# Estado para rastrear qué chat estamos viendo en la Fase A
 if "active_chat_id" not in st.session_state: st.session_state.active_chat_id = None
 
 # --- BARRA LATERAL ---
@@ -65,7 +64,9 @@ with st.sidebar:
                     st.rerun()
         else:
             p_seleccionado = next(p for p in proyectos if p['nombre'] == sel)
-            if st.session_state.current_project != p_seleccionado:
+            
+            # --- SOLUCIÓN DEL BUCLE AMNÉSICO: Comparamos solo el ID para no sobreescribir datos vivos ---
+            if st.session_state.current_project is None or st.session_state.current_project['id'] != p_seleccionado['id']:
                 st.session_state.current_project = p_seleccionado
                 # Cargar fichas guardadas del proyecto
                 st.session_state.fichas = p_seleccionado.get('fichas', []) or []
@@ -74,12 +75,10 @@ with st.sidebar:
         
         st.divider()
         
-        # --- BOTÓN DE GUARDADO CON MANEJO DE ERRORES REAL ---
+        # --- BOTÓN DE GUARDADO ---
         if st.button("💾 Guardar Fichas en la Nube", type="primary"):
             try:
-                # Intentamos actualizar la base de datos
                 respuesta = update_project_data(st.session_state.current_project['id'], {"fichas": st.session_state.fichas})
-                
                 if hasattr(respuesta, 'error') and respuesta.error:
                     st.error(f"Error al guardar: {respuesta.error.message}")
                 else:
