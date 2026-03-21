@@ -9,11 +9,24 @@ def get_model():
 # --- FASE A: IDEAS Y EXTRACCIÓN DE FICHAS ESTRUCTURADAS ---
 def chat_with_ideas(messages, user_input, contexto_rag=None):
     model = get_model()
-    ctx_str = f"\n\nCONTEXTO DE BASES DE DATOS DE APOYO:\n{json.dumps(contexto_rag, ensure_ascii=False)}" if contexto_rag else ""
-    system_instruction = "Eres un tutor de tesis experto en Sinología. Ayudas al usuario a pivotar ideas. Usa siempre 'Pekín' con acento. Sé riguroso y académico." + ctx_str
     
-    # SOLUCIÓN ANTI-CRASH: Concatenamos el historial en un solo bloque de texto continuo.
-    # Esto evita los bloqueos de la API por errores de "alternancia de roles".
+    # 1. EMPAQUETADO ESTRICTO DE LA RAG
+    if contexto_rag:
+        ctx_str = f"\n\n--- INICIO DEL CONTEXTO DE BASES DE DATOS (RAG) ---\n{json.dumps(contexto_rag, ensure_ascii=False)}\n--- FIN DEL CONTEXTO RAG ---\n"
+    else:
+        ctx_str = "\n\n[AVISO CRÍTICO: No se ha proporcionado contexto RAG para esta consulta.]"
+
+    # 2. INSTRUCCIONES DE HIERRO (ANTI-ALUCINACIÓN Y CITA OBLIGATORIA)
+    system_instruction = f"""Eres un investigador y tutor de tesis experto en Sinología.
+    
+    REGLAS DE HIERRO PARA ESTA CONVERSACIÓN:
+    1. CERO ALUCINACIONES: Tienes ESTRICTAMENTE PROHIBIDO usar tu conocimiento general o inventar información. 
+    2. DEPENDENCIA TOTAL: Debes responder ÚNICA y EXCLUSIVAMENTE basándote en el "CONTEXTO DE BASES DE DATOS" proporcionado abajo.
+    3. CITAS OBLIGATORIAS: Cada afirmación, idea o traducción que des DEBE estar justificada. En el JSON del contexto, la información de la obra, autor o enlace suele estar al final de cada bloque. Debes incluir esa cita exacta en tu respuesta (ej. [Mencio, 2A:1] o [Autor, Año, p. X]).
+    4. RESPUESTA VACÍA: Si el usuario pregunta algo que no se encuentra en el CONTEXTO RAG proporcionado, no intentes deducirlo. Responde explícitamente: "No hay información en las fuentes consultadas para justificar esta respuesta."
+    5. Usa siempre 'Pekín' con acento.
+    {ctx_str}"""
+    
     prompt_completo = f"INSTRUCCIONES DEL SISTEMA:\n{system_instruction}\n\n--- HISTORIAL DE LA CONVERSACIÓN ---\n"
     
     for msg in messages:
@@ -51,18 +64,13 @@ def extraer_ficha_de_idea(texto_interaccion, estilo_citacion, contexto_rag=None)
     Si no hay un libro específico en la interacción, intenta deducirlo del Contexto de Fuentes. Si es imposible, escribe "Referencia pendiente".
     """
     try:
-        # FORZAMOS A GEMINI A DEVOLVER JSON PURO Y ESTRICTO
         response = model.generate_content(
             prompt,
             generation_config={"response_mime_type": "application/json"}
         )
         datos = json.loads(response.text)
-        
-        # Filtros de seguridad por si la IA anida la respuesta
         if isinstance(datos, list): datos = datos[0]
         if "ficha" in datos: datos = datos["ficha"]
-        
-        # Convertimos todas las claves a minúsculas
         datos_seguros = {k.lower(): v for k, v in datos.items()}
         
         return {
