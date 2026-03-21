@@ -33,23 +33,40 @@ if "current_project" not in st.session_state: st.session_state.current_project =
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 if "fichas" not in st.session_state: st.session_state.fichas = []
 if "categorias" not in st.session_state: st.session_state.categorias = ["Ideas Generales", "Conceptos Xùngǔ", "Metodología", "Citas/Fuentes"]
-# Estado para rastrear qué chat estamos viendo en la Fase A
 if "active_chat_id" not in st.session_state: st.session_state.active_chat_id = None
 
 # --- BARRA LATERAL ---
 with st.sidebar:
     st.title("Arquitectura de Tesis")
     if not st.session_state.user:
-        with st.form("login"):
-            email = st.text_input("Email")
-            pw = st.text_input("Contraseña", type="password")
-            if st.form_submit_button("Entrar"):
-                try:
-                    res = supabase.auth.sign_in_with_password({"email": email, "password": pw})
-                    st.session_state.user = {"id": res.user.id, "email": res.user.email}
-                    st.rerun()
-                except Exception:
-                    st.error("Credenciales incorrectas.")
+        
+        # 1. Leer credenciales guardadas en secrets.toml
+        creds = st.secrets.get("credenciales", {})
+        saved_email = creds.get("email", "")
+        saved_pw = creds.get("password", "")
+        auto_login = creds.get("auto_login", False)
+        
+        # 2. Intentar Auto-Login invisible
+        if auto_login and saved_email and saved_pw:
+            try:
+                res = supabase.auth.sign_in_with_password({"email": saved_email, "password": saved_pw})
+                st.session_state.user = {"id": res.user.id, "email": res.user.email}
+                st.rerun()
+            except Exception:
+                pass 
+                
+        # 3. Mostrar el formulario
+        if not st.session_state.user:
+            with st.form("login"):
+                email = st.text_input("Email", value=saved_email)
+                pw = st.text_input("Contraseña", type="password", value=saved_pw)
+                if st.form_submit_button("Entrar"):
+                    try:
+                        res = supabase.auth.sign_in_with_password({"email": email, "password": pw})
+                        st.session_state.user = {"id": res.user.id, "email": res.user.email}
+                        st.rerun()
+                    except Exception:
+                        st.error("Credenciales incorrectas.")
     else:
         st.write(f"Investigador: **{st.session_state.user['email']}**")
         proyectos = get_user_projects(st.session_state.user['id'])
@@ -65,17 +82,14 @@ with st.sidebar:
         else:
             p_seleccionado = next(p for p in proyectos if p['nombre'] == sel)
             
-            # --- SOLUCIÓN DEL BUCLE AMNÉSICO: Comparamos solo el ID para no sobreescribir datos vivos ---
             if st.session_state.current_project is None or st.session_state.current_project['id'] != p_seleccionado['id']:
                 st.session_state.current_project = p_seleccionado
-                # Cargar fichas guardadas del proyecto
                 st.session_state.fichas = p_seleccionado.get('fichas', []) or []
-                st.session_state.active_chat_id = None # Reseteamos el chat al cambiar de proyecto
+                st.session_state.active_chat_id = None 
                 st.rerun()
         
         st.divider()
         
-        # --- BOTÓN DE GUARDADO ---
         if st.button("💾 Guardar Fichas en la Nube", type="primary"):
             try:
                 respuesta = update_project_data(st.session_state.current_project['id'], {"fichas": st.session_state.fichas})
@@ -111,7 +125,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.subheader("1. Conversación, Reflexiones y Fichas")
     
-    st.markdown("**Configuración del Entorno de Ideas:**")
+    st.markdown("**Configuración del Entorno de Ideas (Para Nuevas Conversaciones):**")
     col_ctrl1, col_ctrl2 = st.columns(2)
     with col_ctrl1:
         estilo_citacion_a = st.selectbox("Estilo de Citación:", ["APA 7", "Chicago (Notas y Bibliografía)", "Harvard", "MLA"], key="estilo_a")
@@ -126,20 +140,16 @@ with tab1:
         subtab_chat, subtab_manual = st.tabs(["💬 Entorno de Charla", "✍️ Reflexión Manual"])
         
         with subtab_chat:
-            # 1. SELECTOR DE CONVERSACIONES
             st.markdown("**Conversación Activa:**")
             opciones_chat = {"✨ Nueva Conversación (Creará ficha automática)": None}
             for f in st.session_state.fichas:
-                # Mostramos los primeros 40 caracteres como título del chat
                 titulo_corto = f['texto'][:40] + "..." if len(f['texto']) > 40 else f['texto']
                 opciones_chat[f"📄 Ficha: {titulo_corto}"] = f['id']
             
             nombres_opciones = list(opciones_chat.keys())
             ids_opciones = list(opciones_chat.values())
             
-            idx_actual = 0
-            if st.session_state.active_chat_id in ids_opciones:
-                idx_actual = ids_opciones.index(st.session_state.active_chat_id)
+            idx_actual = ids_opciones.index(st.session_state.active_chat_id) if st.session_state.active_chat_id in ids_opciones else 0
                 
             seleccion = st.selectbox("Selecciona un chat previo o inicia uno nuevo:", nombres_opciones, index=idx_actual, label_visibility="collapsed")
             nuevo_id_activo = opciones_chat[seleccion]
@@ -148,26 +158,20 @@ with tab1:
                 st.session_state.active_chat_id = nuevo_id_activo
                 st.rerun()
 
-            # 2. CARGAR EL HISTORIAL DE LA FICHA ACTIVA
-            ficha_activa = None
-            historial_actual = []
-            if st.session_state.active_chat_id:
-                ficha_activa = next((f for f in st.session_state.fichas if f['id'] == st.session_state.active_chat_id), None)
-                if ficha_activa:
-                    historial_actual = ficha_activa.get("chat_history", [])
+            ficha_activa = next((f for f in st.session_state.fichas if f['id'] == st.session_state.active_chat_id), None) if st.session_state.active_chat_id else None
+            historial_actual = ficha_activa.get("chat_history", []) if ficha_activa else []
             
-            # 3. CONTENEDOR DE CHAT
             chat_container = st.container(height=400)
             with chat_container:
                 for msg in historial_actual:
                     with st.chat_message(msg["role"]): st.write(msg["content"])
             
-            # 4. BOTÓN PARA ACTUALIZAR FICHA DESDE LA CONVERSACIÓN
             if ficha_activa and len(historial_actual) > 0:
                 if st.button("🔄 Sintetizar/Actualizar Ficha con este chat", use_container_width=True):
                     with st.spinner("Releyendo conversación y actualizando ficha..."):
                         chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in historial_actual])
-                        ctx_rag = search_research_data(tablas_a, kws_a) if tablas_a else None
+                        # Usamos el RAG anclado para actualizar
+                        ctx_rag = ficha_activa.get('contexto_fijado', None)
                         nuevos_datos = extraer_ficha_de_idea(chat_text, estilo_citacion_a, ctx_rag)
                         
                         ficha_activa['texto'] = nuevos_datos.get("texto", ficha_activa['texto'])
@@ -176,17 +180,25 @@ with tab1:
                         st.success("¡Ficha actualizada!")
                         st.rerun()
 
-            # 5. INPUT DEL USUARIO
+            # --- INPUT DEL USUARIO Y ANCLAJE DE CONTEXTO ---
             if prompt := st.chat_input("Discute ideas con la IA..."):
                 historial_actual.append({"role": "user", "content": prompt})
-                with st.spinner("Procesando..."):
-                    contexto_rag_a = search_research_data(tablas_a, kws_a) if tablas_a else None
-                    # Pasamos el historial previo
+                with st.spinner("Procesando consulta y anclando fuentes..."):
+                    
+                    # 1. EL ANCLAJE DE RAG: Decidimos qué datos pasar a la IA
+                    if st.session_state.active_chat_id is None:
+                        # Chat Nuevo: Buscamos en toda la base de datos viva
+                        contexto_rag_a = search_research_data(tablas_a, kws_a) if tablas_a else None
+                    else:
+                        # Chat Existente: Recuperamos las fuentes congeladas de esta ficha
+                        contexto_rag_a = ficha_activa.get('contexto_fijado', None)
+
+                    # 2. Llamada a la IA con el contexto anclado
                     res = chat_with_ideas(historial_actual[:-1], prompt, contexto_rag_a)
                     historial_actual.append({"role": "assistant", "content": res})
                     
+                    # 3. Guardado en la Ficha
                     if st.session_state.active_chat_id is None:
-                        # Si era un chat nuevo, creamos la ficha automáticamente
                         chat_text = f"user: {prompt}\nassistant: {res}"
                         datos_ficha = extraer_ficha_de_idea(chat_text, estilo_citacion_a, contexto_rag_a)
                         nuevo_id = str(uuid.uuid4())[:8]
@@ -196,11 +208,12 @@ with tab1:
                             "cita_pie": datos_ficha.get("cita_pie", ""),
                             "referencia_bib": datos_ficha.get("referencia_bib", ""),
                             "categoria": "Ideas Generales",
-                            "chat_history": historial_actual # GUARDAMOS EL HISTORIAL AQUÍ
+                            "chat_history": historial_actual,
+                            # AQUI CONGELAMOS EL CONTEXTO EN LA MEMORIA DE LA FICHA
+                            "contexto_fijado": contexto_rag_a 
                         })
-                        st.session_state.active_chat_id = nuevo_id # El chat nuevo se vuelve el activo
+                        st.session_state.active_chat_id = nuevo_id 
                     else:
-                        # Si ya estábamos en un chat, actualizamos su memoria interna
                         ficha_activa['chat_history'] = historial_actual
 
                 st.rerun()
@@ -218,7 +231,8 @@ with tab1:
                         st.session_state.fichas.append({
                             "id": str(uuid.uuid4())[:8], "texto": txt_manual, 
                             "cita_pie": cita_manual, "referencia_bib": bib_manual, "categoria": cat_manual,
-                            "chat_history": [] # Las manuales nacen con historial vacío
+                            "chat_history": [],
+                            "contexto_fijado": None # Las manuales no tienen RAG anclado
                         })
                         st.success("Reflexión añadida.")
                         st.rerun()
@@ -237,9 +251,8 @@ with tab1:
             fichas_cat = [f for f in st.session_state.fichas if f['categoria'] == cat]
             with st.expander(f"📁 {cat} ({len(fichas_cat)} fichas)", expanded=True):
                 for f in fichas_cat:
-                    # Comprobamos si es la ficha activa para resaltarla visualmente
                     es_activa = f['id'] == st.session_state.active_chat_id
-                    borde_color = "#FF9800" if es_activa else "#4CAF50" # Naranja si estás chateando en ella
+                    borde_color = "#FF9800" if es_activa else "#4CAF50" 
                     
                     with st.container():
                         st.markdown(f"<div class='ficha' style='border-left: 4px solid {borde_color};'><b>Nota:</b> {f['texto']}</div>", unsafe_allow_html=True)
@@ -269,7 +282,8 @@ with tab1:
                                 if st.button("Ejecutar Refinamiento", key=f"ref_{f['id']}"):
                                     if instruccion.strip():
                                         with st.spinner("Refinando..."):
-                                            ctx_rag = search_research_data(tablas_a, kws_a) if tablas_a else None
+                                            # Al refinar, también usamos el RAG anclado
+                                            ctx_rag = f.get('contexto_fijado', None)
                                             mejora = refinar_ficha_con_ia(f['texto'], instruccion, estilo_citacion_a, ctx_rag)
                                             f['texto'] = mejora.get("texto", f['texto'])
                                             f['cita_pie'] = mejora.get("cita_pie", f.get('cita_pie', ''))
