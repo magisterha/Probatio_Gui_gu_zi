@@ -8,17 +8,17 @@ def get_supabase_client() -> Client:
     """Retorna el cliente de Supabase configurado. Usamos cache para optimizar conexiones."""
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-# --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (SINOLOGÍA) ---
+# --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (RAG OPTIMIZADO) ---
 
 def search_research_data(tablas_seleccionadas, keywords_raw):
     """
-    Realiza una búsqueda filtrada en las tablas de investigación 
-    para evitar el 'ruido' en la IA.
+    Realiza una búsqueda filtrada ESTRICTAMENTE en la columna 'Palabras Clave'.
+    Optimizado para bases de datos masivas.
     """
     supabase = get_supabase_client()
     contexto_encontrado = []
     
-    # Limpiamos las palabras clave
+    # Limpiamos las palabras clave introducidas por el usuario
     lista_keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
     
     if not lista_keywords:
@@ -29,10 +29,15 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
             # Iniciamos la consulta
             query = supabase.table(tabla).select("*")
             
-            # Construimos el filtro OR para todas las palabras clave
+            # OPTIMIZACIÓN 1: Búsqueda estricta. 
+            # Apuntamos SOLO a la columna "Palabras Clave" usando ilike (ignora mayúsculas/minúsculas).
+            # Las comillas dobles '"Palabras Clave"' son obligatorias para que Supabase entienda el espacio.
             condiciones = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in lista_keywords])
             
-            response = query.or_(condiciones).execute()
+            # OPTIMIZACIÓN 2: Límite de seguridad.
+            # Añadimos .limit(20) para evitar que, si buscas una palabra muy común, 
+            # la base de datos devuelva 500 filas y colapse el límite de tokens de la IA.
+            response = query.or_(condiciones).limit(20).execute()
             
             if response.data:
                 contexto_encontrado.append({
@@ -40,7 +45,7 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
                     "resultados": response.data
                 })
         except Exception as e:
-            st.error(f"Error consultando la tabla {tabla}: {str(e)}")
+            st.error(f"Error consultando la tabla {tabla}: {str(e)}\n¿Existe la columna 'Palabras Clave' en esta tabla?")
             
     return contexto_encontrado
 
@@ -57,7 +62,7 @@ def get_user_projects(user_id):
         return []
 
 def create_new_project(user_id, nombre_tesis):
-    """Crea un nuevo registro de proyecto inicializando todas las columnas de la V3."""
+    """Crea un nuevo registro de proyecto inicializando todas las columnas."""
     supabase = get_supabase_client()
     
     nuevo_proy = {
@@ -66,7 +71,6 @@ def create_new_project(user_id, nombre_tesis):
         "estructura": {},          
         "prompts_maestros": {},    
         "contenido_redactado": {},
-        # INICIALIZACIÓN DE LAS COLUMNAS NUEVAS PARA EVITAR ERRORES NULOS
         "fichas": [],
         "repositorio_indices": [],
         "estructura_activa": {},
@@ -77,7 +81,6 @@ def create_new_project(user_id, nombre_tesis):
     try:
         return supabase.table("proyectos_a").insert(nuevo_proy).execute()
     except Exception as e:
-        # Extraemos el mensaje real de la API si existe
         error_msg = str(e)
         if hasattr(e, 'details') and e.details:
             error_msg = f"{e.details}"
@@ -88,13 +91,8 @@ def create_new_project(user_id, nombre_tesis):
         raise e 
 
 def update_project_data(project_id, data_dict):
-    """
-    Actualiza cualquier campo del proyecto en proyectos_a usando el ID del proyecto.
-    El manejo de errores se delega a app.py para evitar falsos positivos en la interfaz.
-    """
+    """Actualiza cualquier campo del proyecto en proyectos_a usando el ID del proyecto."""
     supabase = get_supabase_client()
-    # Se ejecuta directamente. Si hay error de esquema (ej. falta una columna), 
-    # Python lanzará la excepción y app.py la capturará mostrando el aviso rojo.
     return supabase.table("proyectos_a").update(data_dict).eq("id", project_id).execute()
 
 # --- 3. GESTIÓN DE PERFILES ---
