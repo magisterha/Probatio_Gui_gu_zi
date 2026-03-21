@@ -298,7 +298,7 @@ with tab1:
 with tab2:
     st.subheader("Organización de Ideas mediante IA")
     if st.button("🧠 Generar Nuevo Índice desde Fichas", type="primary"):
-        with st.spinner("Analizando fichas e infiriendo estructura..."):
+        with st.spinner("Analizando debates profundos e infiriendo estructura..."):
             nuevo_indice = generar_indice_desde_fichas(st.session_state.fichas)
             repositorio = st.session_state.current_project.get('repositorio_indices', [])
             nuevo_indice['version'] = f"V{len(repositorio)+1} - {st.session_state.current_project['nombre']}"
@@ -338,15 +338,22 @@ with tab3:
     if not indice:
         st.warning("⚠️ Selecciona o genera una estructura en la Fase B/C.")
     else:
-        st.write("El sistema evaluará si las notas en cada capítulo son suficientes o si debe generar texto nuevo.")
+        st.write("El sistema evaluará la profundidad del debate en cada capítulo para generar texto nuevo.")
         for cap in indice.get('capitulos', []):
             cap_id = str(cap['nro'])
             with st.expander(f"⚙️ Configurar Prompt: Cap {cap_id} - {cap['titulo']}"):
-                textos_notas = [f['texto'] for fid in cap.get('fichas_asociadas', []) for f in st.session_state.fichas if f['id'] == fid]
+                
+                # NUEVO CÓDIGO FASE D: El evaluador lee toda la charla
+                textos_notas = []
+                for fid in cap.get('fichas_asociadas', []):
+                    f_real = next((f for f in st.session_state.fichas if f['id'] == fid), None)
+                    if f_real:
+                        hist = "\n".join([f"{m['role']}: {m['content']}" for m in f_real.get('chat_history', [])])
+                        textos_notas.append(f"--- FICHA ---\nResumen: {f_real['texto']}\nDebate original:\n{hist}\n")
                 notas_str = "\n".join(textos_notas)
                 
-                if st.button(f"🔍 Evaluar Notas y Generar Prompt (Cap {cap_id})"):
-                    with st.spinner("Evaluando completitud..."):
+                if st.button(f"🔍 Evaluar Material y Generar Prompt (Cap {cap_id})"):
+                    with st.spinner("Evaluando completitud del debate..."):
                         prompt_generado = evaluar_y_crear_prompt_inteligente(cap, notas_str)
                         prompts_eval = st.session_state.current_project.get('prompts_inteligentes', {})
                         prompts_eval[cap_id] = prompt_generado
@@ -383,10 +390,16 @@ with tab4:
         nro_cap_sel = cap_sel.split(" ")[1]
         
         if st.button(f"🚀 Ejecutar Redacción ({cap_sel})", type="primary"):
-            with st.spinner("Escribiendo documento académico..."):
+            with st.spinner("Escribiendo documento académico basado en los debates..."):
                 prompt_cap = prompts_eval.get(nro_cap_sel, "")
                 cap_data = next((c for c in indice['capitulos'] if str(c['nro']) == nro_cap_sel), {})
-                textos_notas = [f"Nota: {f['texto']} \nCita: {f.get('cita_pie','')} " for f in st.session_state.fichas if f['id'] in cap_data.get('fichas_asociadas', [])]
+                
+                # NUEVO CÓDIGO FASE E: El redactor final utiliza todo el debate y las citas
+                textos_notas = []
+                for f in st.session_state.fichas:
+                    if f['id'] in cap_data.get('fichas_asociadas', []):
+                        hist = "\n".join([f"{m['role']}: {m['content']}" for m in f.get('chat_history', [])])
+                        textos_notas.append(f"--- FICHA ---\nResumen principal: {f['texto']}\nCita a incluir: {f.get('cita_pie','')}\nDesarrollo profundo de la idea:\n{hist}\n")
                 notas_str = "\n".join(textos_notas)
                 
                 texto_redactado = execute_final_writing(prompt_cap, notas_str, idioma_sel, estilo_libre, estilo_citacion_e)
