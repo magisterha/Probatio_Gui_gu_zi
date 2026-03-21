@@ -112,17 +112,39 @@ def refinar_ficha_con_ia(texto_original, instruccion_usuario, estilo_citacion, c
     except Exception as e:
         return {"texto": texto_original, "cita_pie": "Error al refinar", "referencia_bib": "Error al refinar"}
 
-# --- FASE B/C: SÍNTESIS DE ÍNDICE DESDE FICHAS ---
-def generar_indice_desde_fichas(fichas_categorizadas):
+# --- FASE B/C: SÍNTESIS DE ÍNDICE DESDE FICHAS CON DEBATE PROFUNDO ---
+def generar_indice_desde_fichas(fichas_brutas):
     model = get_model()
-    fichas_str = json.dumps(fichas_categorizadas, indent=2, ensure_ascii=False)
+    
+    # PREPARACIÓN: Empaquetamos el resumen de la ficha junto con todo su historial de chat.
+    fichas_procesadas = []
+    for f in fichas_brutas:
+        historial = ""
+        for msg in f.get("chat_history", []):
+            rol = "Investigador" if msg["role"] == "user" else "Tutor IA"
+            historial += f"{rol}: {msg['content']}\n"
+            
+        fichas_procesadas.append({
+            "id_ficha": f["id"],
+            "categoria": f.get("categoria", ""),
+            "idea_resumen": f.get("texto", ""),
+            "debate_profundo": historial if historial else "Nota manual directa sin conversación."
+        })
+        
+    fichas_str = json.dumps(fichas_procesadas, indent=2, ensure_ascii=False)
     
     prompt = f"""
-    Eres un Decano de Investigación. Revisa estas notas y fichas organizadas:
+    Eres un Decano de Investigación estructurando una tesis doctoral. 
+    Revisa este volcado de ideas recopiladas por el investigador.
+    
+    ATENCIÓN CRÍTICA: Cada nota contiene una "idea_resumen" breve, pero también el "debate_profundo" (la conversación exacta que originó la idea). 
+    DEBES leer el debate profundo de cada ficha para entender los matices, argumentos y conexiones lógicas reales antes de proponer el índice. No te quedes solo en la superficie.
+    
+    MATERIAL DE TRABAJO:
     {fichas_str}
     
     TAREA:
-    Crea un Índice de Tesis estructurado que dé sentido a estas notas.
+    Crea un Índice de Tesis estructurado que dé sentido a este material.
     Devuelve los datos EXACTAMENTE con esta estructura JSON:
     {{
       "titulo_tesis": "Título sugerido",
@@ -130,7 +152,7 @@ def generar_indice_desde_fichas(fichas_categorizadas):
         {{
           "nro": 1,
           "titulo": "Título",
-          "objetivo": "Objetivo",
+          "objetivo": "Objetivo detallado basado en el debate profundo",
           "fichas_asociadas": ["ID de las fichas que encajan aquí"]
         }}
       ]
@@ -151,10 +173,12 @@ def evaluar_y_crear_prompt_inteligente(capitulo, notas_texto):
     prompt = f"""
     Eres un Director de Tesis evaluando el material para el Capítulo: "{capitulo['titulo']}".
     Objetivo: {capitulo['objetivo']}
-    NOTAS RECOPILADAS: {notas_texto if notas_texto else "Ninguna nota asociada."}
     
-    TAREA: Evalúa si las notas son suficientes para redactar el capítulo y genera un Prompt Maestro.
-    - Si son suficientes: Instruye a la IA a "Dar coherencia estilística a las notas SIN inventar información nueva".
+    NOTAS RECOPILADAS (INCLUYEN DEBATE PROFUNDO DE LAS FICHAS): 
+    {notas_texto if notas_texto else "Ninguna nota asociada."}
+    
+    TAREA: Evalúa si el material y el debate son suficientes para redactar el capítulo y genera un Prompt Maestro.
+    - Si son suficientes: Instruye a la IA a "Dar coherencia estilística al material SIN inventar información nueva, integrando los matices del debate".
     - Si son insuficientes: Instruye a la IA a "Redactar el capítulo expandiendo la información y desarrollando argumentos para cubrir el vacío".
     
     Devuelve EXCLUSIVAMENTE el texto del prompt generado.
@@ -166,14 +190,14 @@ def execute_final_writing(prompt_maestro, notas_texto, idioma, estilo, estilo_ci
     model = get_model()
     prompt_final = f"""
     INSTRUCCIÓN MAESTRA: {prompt_maestro}
-    MATERIAL BASE (NOTAS): {notas_texto}
+    MATERIAL BASE (NOTAS, CITAS Y DEBATE PROFUNDO): {notas_texto}
     
     REQUISITOS:
     - Idioma: {idioma}
     - Notas de estilo: {estilo if estilo else "Académico formal estándar"}
-    - Estilo de Citación: {estilo_citacion}. Asegúrate de insertar las notas al pie dentro del texto usando este formato.
+    - Estilo de Citación: {estilo_citacion}. Asegúrate de insertar las notas al pie dentro del texto usando este formato y respetando las citas indicadas en el material base.
     
-    TAREA: Redacta el contenido del capítulo. NO saludes. Escribe directamente el texto académico usando 'Pekín' con acento.
+    TAREA: Redacta el contenido del capítulo aprovechando toda la profundidad analítica del material base. NO saludes. Escribe directamente el texto académico usando 'Pekín' con acento.
     """
     return model.generate_content(prompt_final).text
 
