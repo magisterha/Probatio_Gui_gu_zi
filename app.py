@@ -2,9 +2,10 @@ import streamlit as st
 from supabase import create_client, Client
 import json
 import uuid
+import re
 
 # Módulos personalizados
-from modules.database import search_research_data, get_user_projects, create_new_project, update_project_data
+from modules.database import search_research_data, search_corpus_exact, get_user_projects, create_new_project, update_project_data
 from modules.ai_engine import (
     chat_with_ideas, extraer_ficha_de_idea, refinar_ficha_con_ia, generar_indice_desde_fichas, 
     evaluar_y_crear_prompt_inteligente, execute_final_writing, generar_bibliografia_global,
@@ -26,6 +27,7 @@ st.markdown("""
     .ficha { background-color: #f8f9fa; padding: 15px; border-left: 4px solid #4CAF50; border-radius: 5px; margin-bottom: 5px; color: black; }
     .document-box { background-color: #ffffff; padding: 40px; border: 1px solid #ccc; font-family: 'Times New Roman', Times, serif; line-height: 1.8; color: black; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); }
     .pergamino { background-color: #fdf6e3; padding: 20px; border: 1px solid #e0d6b8; border-radius: 5px; font-family: 'Times New Roman', Times, serif; color: #333; height: 600px; overflow-y: auto; }
+    .snippet-box { background-color: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #2196F3; color: black; margin-bottom: 10px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -85,6 +87,7 @@ with st.sidebar:
                 st.session_state.fuentes = p_seleccionado.get('fuentes_primarias', []) or []
                 st.session_state.active_chat_id = None 
                 st.session_state.active_source_id = None
+                st.session_state.resultados_corpus = None # Limpiamos búsqueda
                 st.rerun()
         
         st.divider()
@@ -104,8 +107,8 @@ with st.sidebar:
             
         if st.button("Cerrar Sesión"):
             supabase.auth.sign_out()
-            for key in ["user", "current_project", "fichas", "fuentes", "active_chat_id", "active_source_id"]:
-                st.session_state[key] = None if key != "fichas" and key != "fuentes" else []
+            for key in ["user", "current_project", "fichas", "fuentes", "active_chat_id", "active_source_id", "resultados_corpus"]:
+                st.session_state[key] = None if key not in ["fichas", "fuentes"] else []
             st.rerun()
 
 if not st.session_state.current_project:
@@ -115,7 +118,8 @@ if not st.session_state.current_project:
 # --- NAVEGACIÓN PRINCIPAL ---
 st.title(f"📖 {st.session_state.current_project['nombre']}")
 
-tab0, tab1, tab2, tab3, tab4 = st.tabs([
+tab_corpus, tab_fuentes, tab_ideas, tab_indices, tab_prompts, tab_redaccion = st.tabs([
+    "🔍 Buscador de Corpus",
     "📚 Fuentes Primarias y Glosas",
     "💡 A. Entorno de Ideas (Puzzle)", 
     "🏗️ B/C. Organizador de Índices", 
@@ -123,8 +127,72 @@ tab0, tab1, tab2, tab3, tab4 = st.tabs([
     "📜 E. Redacción y Exportación"
 ])
 
-# --- MÓDULO NUEVO: FUENTES PRIMARIAS Y GLOSAS ---
-with tab0:
+# --- NUEVO: BUSCADOR DE CORPUS (CONCORDANCIAS) ---
+with tab_corpus:
+    st.subheader("🔍 Herramienta de Concordancias (Corpus Lingüístico)")
+    st.markdown("Busca apariciones exactas de un término en toda la base de datos y expórtalas al Laboratorio Filológico.")
+    
+    col_c1, col_c2, col_c3 = st.columns([2, 1.5, 1.5])
+    with col_c1:
+        tablas_corpus = st.multiselect("Bases de datos a explorar:", ["戰國策", "Xunzi", "Mencio", "Analectas de Confucio", "Glosas de 鬼谷子"], key="tablas_corpus")
+    with col_c2:
+        col_texto = st.text_input("Nombre de la columna de texto:", value="Texto", help="Asegúrate de que coincide con el nombre en Supabase (ej. Texto, Contenido...)")
+    with col_c3:
+        termino_busqueda = st.text_input("Término a rastrear:", placeholder="Ej. 情 o páthos")
+        
+    if st.button("Búsqueda Avanzada", type="primary"):
+        if not tablas_corpus or not termino_busqueda:
+            st.warning("Selecciona al menos una base de datos y escribe un término.")
+        else:
+            with st.spinner("Rastreando documentos en milisegundos..."):
+                resultados = search_corpus_exact(tablas_corpus, col_texto, termino_busqueda)
+                st.session_state.resultados_corpus = resultados
+                st.session_state.termino_corpus = termino_busqueda
+
+    # Mostrar resultados guardados en memoria
+    if st.session_state.get("resultados_corpus"):
+        st.divider()
+        st.markdown(f"### 🎯 Resultados encontrados para: **{st.session_state.termino_corpus}**")
+        
+        for res_tabla in st.session_state.resultados_corpus:
+            st.markdown(f"#### 📁 Archivo: {res_tabla['tabla']} ({len(res_tabla['resultados'])} coincidencias)")
+            for idx, fila in enumerate(res_tabla['resultados']):
+                texto_completo = fila.get(col_texto, "")
+                
+                # Función para extraer y resaltar el fragmento
+                term = st.session_state.termino_corpus
+                idx_find = texto_completo.lower().find(term.lower())
+                
+                # Si el texto es muy largo, recortamos una ventana alrededor de la palabra
+                start = max(0, idx_find - 200)
+                end = min(len(texto_completo), idx_find + len(term) + 200)
+                snippet = texto_completo[start:end]
+                if start > 0: snippet = "[...] " + snippet
+                if end < len(texto_completo): snippet = snippet + " [...]"
+                
+                # Resaltamos visualmente el término
+                snippet_html = re.sub(f"({re.escape(term)})", r"<mark style='background-color: #ffeb3b; color: black; font-weight: bold; padding: 0 3px;'>\1</mark>", snippet, flags=re.IGNORECASE)
+                
+                with st.container():
+                    st.markdown(f"<div class='snippet-box'>{snippet_html}</div>", unsafe_allow_html=True)
+                    
+                    if st.button(f"📝 Llevar texto completo al Laboratorio Filológico", key=f"exp_corpus_{res_tabla['tabla']}_{fila.get('id', idx)}"):
+                        nuevo_id = str(uuid.uuid4())[:8]
+                        titulo_fuente = f"Fragmento de {res_tabla['tabla']} (Análisis de '{term}')"
+                        st.session_state.fuentes.append({
+                            "id_fuente": nuevo_id, 
+                            "titulo": titulo_fuente, 
+                            "texto_completo": texto_completo, # Exportamos el texto entero para que la IA tenga contexto total
+                            "chat_history": [], 
+                            "notas_marginales": []
+                        })
+                        st.session_state.active_source_id = nuevo_id
+                        st.success("¡Exportado con éxito! Ve a la pestaña 'Fuentes Primarias y Glosas' para comenzar el análisis.")
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+
+# --- MÓDULO: FUENTES PRIMARIAS Y GLOSAS ---
+with tab_fuentes:
     st.subheader("Laboratorio Filológico: Análisis de Fuentes Primarias")
     col_arch, col_perg, col_lab = st.columns([1, 2, 1.5])
     
@@ -186,12 +254,10 @@ with tab0:
                 
             tab_chat, tab_notas = st.tabs(["💬 Glosador IA", "📝 Notas Marginales"])
             
-            # --- PESTAÑA: CHAT CON LA FUENTE ---
             with tab_chat:
                 historial_glosa = fuente_activa.get("chat_history", [])
                 
-                # Opciones de RAG para el chat primario
-                with st.expander("⚙️ Configurar Consulta a Bases de Datos (RAG)"):
+                with st.expander("⚙️ Configurar Consulta Comparativa (RAG)"):
                     usar_rag_fuente = st.checkbox("Cruzar análisis con bases de datos externas", value=False)
                     tablas_f = []
                     kws_f = ""
@@ -200,7 +266,7 @@ with tab0:
                         kws_f = st.text_input("Palabras clave (Opcional):", key="kws_f")
 
                 if len(historial_glosa) > 0:
-                    if st.button("🎯 Convertir Conversación en Ficha de Investigación", use_container_width=True, type="primary"):
+                    if st.button("🎯 Convertir Conversación en Ficha", use_container_width=True, type="primary"):
                         with st.spinner("Sintetizando hallazgo y exportando al Puzzle..."):
                             datos_ficha = convert_glosa_to_ficha(historial_glosa, fuente_activa['titulo'])
                             st.session_state.fichas.append({
@@ -224,21 +290,17 @@ with tab0:
                 if prompt := st.chat_input("Consulta a la IA sobre el texto..."):
                     historial_glosa.append({"role": "user", "content": prompt})
                     with st.spinner("Analizando texto primario..."):
-                        # Extraemos el RAG si el usuario activó la casilla
                         ctx_rag_f = None
                         if usar_rag_fuente and tablas_f:
                             ctx_rag_f = search_research_data(tablas_f, kws_f)
 
-                        # Inyectamos notas marginales Y contexto RAG a la IA
                         res = chat_with_primary_source(historial_glosa[:-1], prompt, fuente_activa['texto_completo'], fuente_activa.get('notas_marginales', []), ctx_rag_f)
                         historial_glosa.append({"role": "assistant", "content": res})
                         fuente_activa['chat_history'] = historial_glosa
                     st.rerun()
             
-            # --- PESTAÑA: NOTAS MARGINALES ---
             with tab_notas:
                 st.markdown("Anota traducciones o comentarios personales. La IA leerá estas notas.")
-                
                 with st.form("form_nueva_nota"):
                     nueva_nota_txt = st.text_area("Añadir nota al margen:")
                     if st.form_submit_button("Guardar Nota"):
@@ -249,7 +311,6 @@ with tab0:
                             })
                             st.rerun()
                 
-                # NUEVO: Mostrar notas con opción de EXPORTAR
                 for nota in fuente_activa["notas_marginales"]:
                     with st.container():
                         col_txt, col_exp, col_del = st.columns([4, 1, 1])
@@ -277,10 +338,10 @@ with tab0:
 
 
 # --- FASE A: CHAT, REFLEXIONES Y TABLERO KANBAN ---
-with tab1:
+with tab_ideas:
     st.subheader("1. Conversación, Reflexiones y Fichas")
     
-    st.markdown("**Configuración del Entorno de Ideas (Para Nuevas Conversaciones):**")
+    st.markdown("**Configuración del Entorno de Ideas:**")
     col_ctrl1, col_ctrl2 = st.columns(2)
     with col_ctrl1:
         estilo_citacion_a = st.selectbox("Estilo de Citación:", ["APA 7", "Chicago (Notas y Bibliografía)", "Harvard", "MLA"], key="estilo_a")
@@ -295,7 +356,6 @@ with tab1:
         subtab_chat, subtab_manual = st.tabs(["💬 Entorno de Charla", "✍️ Reflexión Manual"])
         
         with subtab_chat:
-            st.markdown("**Conversación Activa:**")
             opciones_chat = {"✨ Nueva Conversación (Creará ficha automática)": None}
             for f in st.session_state.fichas:
                 titulo_corto = f['texto'][:40] + "..." if len(f['texto']) > 40 else f['texto']
@@ -303,7 +363,6 @@ with tab1:
             
             nombres_opciones = list(opciones_chat.keys())
             ids_opciones = list(opciones_chat.values())
-            
             idx_actual = ids_opciones.index(st.session_state.active_chat_id) if st.session_state.active_chat_id in ids_opciones else 0
                 
             seleccion = st.selectbox("Selecciona un chat previo o inicia uno nuevo:", nombres_opciones, index=idx_actual, label_visibility="collapsed")
@@ -365,10 +424,9 @@ with tab1:
                 st.rerun()
 
         with subtab_manual:
-            st.markdown("Introduce tus propias ideas sin intervención de la IA.")
             with st.form("form_nota_manual"):
                 txt_manual = st.text_area("Texto de tu reflexión (Requerido):")
-                cita_manual = st.text_input("Nota al pie (Opcional):", placeholder="Ej: Smith, 2020, p. 45")
+                cita_manual = st.text_input("Nota al pie (Opcional):")
                 bib_manual = st.text_input("Referencia Bibliográfica (Opcional):")
                 cat_manual = st.selectbox("Categoría:", st.session_state.categorias)
                 
@@ -377,13 +435,10 @@ with tab1:
                         st.session_state.fichas.append({
                             "id": str(uuid.uuid4())[:8], "texto": txt_manual, 
                             "cita_pie": cita_manual, "referencia_bib": bib_manual, "categoria": cat_manual,
-                            "chat_history": [],
-                            "contexto_fijado": None 
+                            "chat_history": [], "contexto_fijado": None 
                         })
                         st.success("Reflexión añadida.")
                         st.rerun()
-                    else:
-                        st.error("El texto no puede estar vacío.")
 
     with col_tablero:
         st.markdown("### 🧩 Tablero de Fichas (Puzzle)")
@@ -411,19 +466,17 @@ with tab1:
                                 st.session_state.active_chat_id = f['id']
                                 st.rerun()
                         with col_btn2:
-                            with st.expander("⚙️ Opciones de ficha"):
-                                nueva_cat = st.selectbox("Mover ficha a:", st.session_state.categorias, index=st.session_state.categorias.index(cat), key=f"sel_{f['id']}")
+                            with st.expander("⚙️ Opciones"):
+                                nueva_cat = st.selectbox("Mover a:", st.session_state.categorias, index=st.session_state.categorias.index(cat), key=f"sel_{f['id']}")
                                 if nueva_cat != cat:
                                     f['categoria'] = nueva_cat; st.rerun()
                                 st.divider()
-                                st.markdown("**✏️ Edición Manual**")
                                 e_txt = st.text_area("Texto:", f['texto'], key=f"etxt_{f['id']}")
                                 e_cit = st.text_input("Cita:", f.get('cita_pie', ''), key=f"ecit_{f['id']}")
                                 e_bib = st.text_input("Bib:", f.get('referencia_bib', ''), key=f"ebib_{f['id']}")
                                 if st.button("💾 Guardar Edición", key=f"save_{f['id']}"):
                                     f['texto'] = e_txt; f['cita_pie'] = e_cit; f['referencia_bib'] = e_bib; st.rerun()
                                 st.divider()
-                                st.markdown("**✨ Refinar con IA**")
                                 instruccion = st.text_area("¿Qué debe mejorar la IA?", key=f"inst_{f['id']}")
                                 if st.button("Ejecutar Refinamiento", key=f"ref_{f['id']}"):
                                     if instruccion.strip():
@@ -439,8 +492,9 @@ with tab1:
                                     st.session_state.fichas.remove(f); st.rerun()
                         st.markdown("---")
 
+
 # --- FASE B/C: ORGANIZADOR DE ÍNDICES Y REPOSITORIO ---
-with tab2:
+with tab_indices:
     st.subheader("Organización de Ideas mediante IA")
     if st.button("🧠 Generar Nuevo Índice desde Fichas", type="primary"):
         with st.spinner("Analizando debates profundos e infiriendo estructura..."):
@@ -473,21 +527,19 @@ with tab2:
                     ficha_real = next((f for f in st.session_state.fichas if f['id'] == fid), None)
                     if ficha_real: st.info(ficha_real['texto'])
     else:
-        st.info("No hay índices guardados. Genera uno usando el botón superior.")
+        st.info("No hay índices guardados.")
 
 # --- FASE D: MOTOR DE PROMPTS INTELIGENTE ---
-with tab3:
+with tab_prompts:
     st.subheader("Evaluación de Coherencia y Prompts")
     indice = st.session_state.current_project.get('estructura_activa')
     
     if not indice:
         st.warning("⚠️ Selecciona o genera una estructura en la Fase B/C.")
     else:
-        st.write("El sistema evaluará la profundidad del debate en cada capítulo para generar texto nuevo.")
         for cap in indice.get('capitulos', []):
             cap_id = str(cap['nro'])
             with st.expander(f"⚙️ Configurar Prompt: Cap {cap_id} - {cap['titulo']}"):
-                
                 textos_notas = []
                 for fid in cap.get('fichas_asociadas', []):
                     f_real = next((f for f in st.session_state.fichas if f['id'] == fid), None)
@@ -516,7 +568,7 @@ with tab3:
                         st.success("Guardado.")
 
 # --- FASE E: REDACCIÓN FINAL Y EXPORTACIÓN ---
-with tab4:
+with tab_redaccion:
     st.subheader("Redacción y Ensamblaje Final")
     prompts_eval = st.session_state.current_project.get('prompts_inteligentes', {})
     indice = st.session_state.current_project.get('estructura_activa')
@@ -534,7 +586,7 @@ with tab4:
         nro_cap_sel = cap_sel.split(" ")[1]
         
         if st.button(f"🚀 Ejecutar Redacción ({cap_sel})", type="primary"):
-            with st.spinner("Escribiendo documento académico basado en los debates..."):
+            with st.spinner("Escribiendo documento..."):
                 prompt_cap = prompts_eval.get(nro_cap_sel, "")
                 cap_data = next((c for c in indice['capitulos'] if str(c['nro']) == nro_cap_sel), {})
                 
@@ -542,7 +594,7 @@ with tab4:
                 for f in st.session_state.fichas:
                     if f['id'] in cap_data.get('fichas_asociadas', []):
                         hist = "\n".join([f"{m['role']}: {m['content']}" for m in f.get('chat_history', [])])
-                        textos_notas.append(f"--- FICHA ---\nResumen principal: {f['texto']}\nCita a incluir: {f.get('cita_pie','')}\nDesarrollo profundo de la idea:\n{hist}\n")
+                        textos_notas.append(f"--- FICHA ---\nResumen principal: {f['texto']}\nCita: {f.get('cita_pie','')}\nDesarrollo profundo:\n{hist}\n")
                 notas_str = "\n".join(textos_notas)
                 
                 texto_redactado = execute_final_writing(prompt_cap, notas_str, idioma_sel, estilo_libre, estilo_citacion_e)
@@ -558,7 +610,7 @@ with tab4:
             st.markdown("### 📑 Vista de Lectura")
             
             if st.button("📚 Generar/Actualizar Bibliografía Final"):
-                with st.spinner("Extrayendo citas y formateando bibliografía..."):
+                with st.spinner("Formateando bibliografía..."):
                     texto_total = "\n\n".join(documento.values())
                     biblio = generar_bibliografia_global(texto_total, estilo_citacion_e)
                     update_project_data(st.session_state.current_project['id'], {"bibliografia": biblio})
@@ -572,7 +624,6 @@ with tab4:
                 st.markdown(f"<h2>Capítulo {n}</h2>", unsafe_allow_html=True)
                 st.markdown(documento[n])
                 st.markdown("<hr>", unsafe_allow_html=True)
-            
             if bibliografia_actual:
                 st.markdown("<h2>Bibliografía</h2>", unsafe_allow_html=True)
                 st.markdown(bibliografia_actual)
