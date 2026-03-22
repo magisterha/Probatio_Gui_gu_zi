@@ -91,7 +91,6 @@ with st.sidebar:
         
         if st.button("💾 Guardar Progreso en la Nube", type="primary"):
             try:
-                # AHORA GUARDAMOS TANTO LAS FICHAS COMO LAS FUENTES
                 respuesta = update_project_data(st.session_state.current_project['id'], {
                     "fichas": st.session_state.fichas,
                     "fuentes_primarias": st.session_state.fuentes
@@ -116,7 +115,6 @@ if not st.session_state.current_project:
 # --- NAVEGACIÓN PRINCIPAL ---
 st.title(f"📖 {st.session_state.current_project['nombre']}")
 
-# NUEVA ESTRUCTURA DE PESTAÑAS
 tab0, tab1, tab2, tab3, tab4 = st.tabs([
     "📚 Fuentes Primarias y Glosas",
     "💡 A. Entorno de Ideas (Puzzle)", 
@@ -162,8 +160,10 @@ with tab0:
                 if st.form_submit_button("Subir Texto"):
                     if t_tit and t_txt:
                         n_id = str(uuid.uuid4())[:8]
+                        # Inicializamos la fuente con su chat y su lista de notas marginales
                         st.session_state.fuentes.append({
-                            "id_fuente": n_id, "titulo": t_tit, "texto_completo": t_txt, "chat_history": []
+                            "id_fuente": n_id, "titulo": t_tit, "texto_completo": t_txt, 
+                            "chat_history": [], "notas_marginales": []
                         })
                         st.session_state.active_source_id = n_id
                         st.success("Texto incorporado.")
@@ -182,38 +182,73 @@ with tab0:
     with col_lab:
         st.markdown("### 🔬 Laboratorio Filológico")
         if fuente_activa:
-            historial_glosa = fuente_activa.get("chat_history", [])
+            # Aseguramos compatibilidad: si la fuente es antigua y no tiene la lista, se la creamos
+            if "notas_marginales" not in fuente_activa:
+                fuente_activa["notas_marginales"] = []
+                
+            tab_chat, tab_notas = st.tabs(["💬 Glosador IA", "📝 Notas Marginales"])
             
-            if len(historial_glosa) > 0:
-                if st.button("🎯 Convertir Conversación en Ficha de Investigación", use_container_width=True, type="primary"):
-                    with st.spinner("Sintetizando hallazgo y exportando al Puzzle..."):
-                        datos_ficha = convert_glosa_to_ficha(historial_glosa, fuente_activa['titulo'])
-                        st.session_state.fichas.append({
-                            "id": str(uuid.uuid4())[:8], 
-                            "texto": datos_ficha.get("texto", "Análisis extraído"), 
-                            "cita_pie": datos_ficha.get("cita_pie", ""),
-                            "referencia_bib": datos_ficha.get("referencia_bib", ""),
-                            "categoria": "Análisis de Fuentes",
-                            "chat_history": historial_glosa.copy(),
-                            "contexto_fijado": fuente_activa['texto_completo'] # La fuente entera viaja como RAG anclado
-                        })
-                        # Limpiamos el chat de la fuente para empezar una nueva glosa
-                        fuente_activa["chat_history"] = []
-                        st.success("¡Hallazgo exportado a 'A. Entorno de Ideas'!")
-                        st.rerun()
+            # --- PESTAÑA: CHAT CON LA FUENTE ---
+            with tab_chat:
+                historial_glosa = fuente_activa.get("chat_history", [])
+                
+                if len(historial_glosa) > 0:
+                    if st.button("🎯 Convertir Conversación en Ficha de Investigación", use_container_width=True, type="primary"):
+                        with st.spinner("Sintetizando hallazgo y exportando al Puzzle..."):
+                            datos_ficha = convert_glosa_to_ficha(historial_glosa, fuente_activa['titulo'])
+                            st.session_state.fichas.append({
+                                "id": str(uuid.uuid4())[:8], 
+                                "texto": datos_ficha.get("texto", "Análisis extraído"), 
+                                "cita_pie": datos_ficha.get("cita_pie", ""),
+                                "referencia_bib": datos_ficha.get("referencia_bib", ""),
+                                "categoria": "Análisis de Fuentes",
+                                "chat_history": historial_glosa.copy(),
+                                "contexto_fijado": fuente_activa['texto_completo'] 
+                            })
+                            fuente_activa["chat_history"] = []
+                            st.success("¡Hallazgo exportado a 'A. Entorno de Ideas'!")
+                            st.rerun()
+                
+                chat_container = st.container(height=350)
+                with chat_container:
+                    for msg in historial_glosa:
+                        with st.chat_message(msg["role"]): st.write(msg["content"])
+                
+                if prompt := st.chat_input("Consulta a la IA sobre el texto..."):
+                    historial_glosa.append({"role": "user", "content": prompt})
+                    with st.spinner("Analizando texto primario..."):
+                        # Pasamos también las notas marginales a la IA
+                        res = chat_with_primary_source(historial_glosa[:-1], prompt, fuente_activa['texto_completo'], fuente_activa.get('notas_marginales', []))
+                        historial_glosa.append({"role": "assistant", "content": res})
+                        fuente_activa['chat_history'] = historial_glosa
+                    st.rerun()
             
-            chat_container = st.container(height=400)
-            with chat_container:
-                for msg in historial_glosa:
-                    with st.chat_message(msg["role"]): st.write(msg["content"])
-            
-            if prompt := st.chat_input("Consulta a la IA sobre el texto..."):
-                historial_glosa.append({"role": "user", "content": prompt})
-                with st.spinner("Analizando texto primario..."):
-                    res = chat_with_primary_source(historial_glosa[:-1], prompt, fuente_activa['texto_completo'])
-                    historial_glosa.append({"role": "assistant", "content": res})
-                    fuente_activa['chat_history'] = historial_glosa
-                st.rerun()
+            # --- PESTAÑA: NOTAS MARGINALES ---
+            with tab_notas:
+                st.markdown("Anota traducciones, comentarios o dudas. La IA leerá estas notas para entender tu enfoque.")
+                
+                # Formulario para añadir nueva nota
+                with st.form("form_nueva_nota"):
+                    nueva_nota_txt = st.text_area("Añadir nota al margen:")
+                    if st.form_submit_button("Guardar Nota"):
+                        if nueva_nota_txt.strip():
+                            fuente_activa["notas_marginales"].append({
+                                "id": str(uuid.uuid4())[:8],
+                                "texto": nueva_nota_txt.strip()
+                            })
+                            st.rerun()
+                
+                # Mostrar notas existentes
+                for nota in fuente_activa["notas_marginales"]:
+                    with st.container():
+                        col_txt, col_del = st.columns([5, 1])
+                        with col_txt:
+                            st.info(nota["texto"])
+                        with col_del:
+                            if st.button("🗑️", key=f"del_nota_{nota['id']}"):
+                                fuente_activa["notas_marginales"].remove(nota)
+                                st.rerun()
+
         else:
             st.info("Esperando texto primario...")
 
