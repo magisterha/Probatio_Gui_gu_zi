@@ -39,6 +39,8 @@ if "fuentes" not in st.session_state: st.session_state.fuentes = []
 if "categorias" not in st.session_state: st.session_state.categorias = ["Ideas Generales", "Conceptos Xùngǔ", "Metodología", "Citas/Fuentes", "Análisis de Fuentes"]
 if "active_chat_id" not in st.session_state: st.session_state.active_chat_id = None
 if "active_source_id" not in st.session_state: st.session_state.active_source_id = None
+if "resultados_corpus" not in st.session_state: st.session_state.resultados_corpus = None
+if "termino_corpus" not in st.session_state: st.session_state.termino_corpus = ""
 
 # --- BARRA LATERAL ---
 with st.sidebar:
@@ -87,7 +89,7 @@ with st.sidebar:
                 st.session_state.fuentes = p_seleccionado.get('fuentes_primarias', []) or []
                 st.session_state.active_chat_id = None 
                 st.session_state.active_source_id = None
-                st.session_state.resultados_corpus = None # Limpiamos búsqueda
+                st.session_state.resultados_corpus = None 
                 st.rerun()
         
         st.divider()
@@ -157,20 +159,23 @@ with tab_corpus:
         for res_tabla in st.session_state.resultados_corpus:
             st.markdown(f"#### 📁 Archivo: {res_tabla['tabla']} ({len(res_tabla['resultados'])} coincidencias)")
             for idx, fila in enumerate(res_tabla['resultados']):
-                texto_completo = fila.get(col_texto, "")
                 
-                # Función para extraer y resaltar el fragmento
+                # --- SOLUCIÓN: Búsqueda de columna a prueba de balas ---
+                clave_real = next((k for k in fila.keys() if k.lower() == col_texto.lower()), col_texto)
+                texto_completo = fila.get(clave_real, "")
+                
+                if not texto_completo:
+                    texto_completo = f"[⚠️ El sistema no encontró texto en la columna '{col_texto}']"
+                
                 term = st.session_state.termino_corpus
                 idx_find = texto_completo.lower().find(term.lower())
                 
-                # Si el texto es muy largo, recortamos una ventana alrededor de la palabra
-                start = max(0, idx_find - 200)
-                end = min(len(texto_completo), idx_find + len(term) + 200)
+                start = max(0, idx_find - 200) if idx_find != -1 else 0
+                end = min(len(texto_completo), start + len(term) + 400)
                 snippet = texto_completo[start:end]
                 if start > 0: snippet = "[...] " + snippet
                 if end < len(texto_completo): snippet = snippet + " [...]"
                 
-                # Resaltamos visualmente el término
                 snippet_html = re.sub(f"({re.escape(term)})", r"<mark style='background-color: #ffeb3b; color: black; font-weight: bold; padding: 0 3px;'>\1</mark>", snippet, flags=re.IGNORECASE)
                 
                 with st.container():
@@ -182,7 +187,7 @@ with tab_corpus:
                         st.session_state.fuentes.append({
                             "id_fuente": nuevo_id, 
                             "titulo": titulo_fuente, 
-                            "texto_completo": texto_completo, # Exportamos el texto entero para que la IA tenga contexto total
+                            "texto_completo": texto_completo, 
                             "chat_history": [], 
                             "notas_marginales": []
                         })
