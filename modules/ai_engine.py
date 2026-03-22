@@ -75,14 +75,22 @@ def convert_glosa_to_ficha(chat_history, titulo_fuente):
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         datos = json.loads(response.text)
+        
+        # --- FILTROS DE SEGURIDAD AÑADIDOS ---
+        if isinstance(datos, list): 
+            datos = datos[0]
+        if "ficha" in datos: 
+            datos = datos["ficha"]
+            
         datos_seguros = {k.lower(): v for k, v in datos.items()}
+        
         return {
             "texto": datos_seguros.get("texto", "No se pudo extraer el texto"), 
             "cita_pie": datos_seguros.get("cita_pie", f"Fuente: {titulo_fuente}"),
             "referencia_bib": datos_seguros.get("referencia_bib", f"{titulo_fuente}")
         }
     except Exception as e:
-        return {"texto": "Error de extracción.", "cita_pie": "Error", "referencia_bib": "Error"}
+        return {"texto": f"Error de extracción de la IA: {str(e)}", "cita_pie": "Error", "referencia_bib": "Error"}
 
 # --- FASE A: IDEAS Y EXTRACCIÓN DE FICHAS ESTRUCTURADAS ---
 def chat_with_ideas(messages, user_input, contexto_rag=None):
@@ -133,8 +141,11 @@ def extraer_ficha_de_idea(texto_interaccion, estilo_citacion, contexto_rag=None)
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         datos = json.loads(response.text)
+        
+        # --- FILTROS DE SEGURIDAD ---
         if isinstance(datos, list): datos = datos[0]
         if "ficha" in datos: datos = datos["ficha"]
+        
         datos_seguros = {k.lower(): v for k, v in datos.items()}
         return {
             "texto": datos_seguros.get("texto", response.text), 
@@ -156,7 +167,13 @@ def refinar_ficha_con_ia(texto_original, instruccion_usuario, estilo_citacion, c
     """
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        return {k.lower(): v for k, v in json.loads(response.text).items()}
+        datos = json.loads(response.text)
+        
+        # --- FILTROS DE SEGURIDAD ---
+        if isinstance(datos, list): datos = datos[0]
+        if "ficha" in datos: datos = datos["ficha"]
+            
+        return {k.lower(): v for k, v in datos.items()}
     except Exception:
         return {"texto": texto_original, "cita_pie": "Error", "referencia_bib": "Error"}
 
