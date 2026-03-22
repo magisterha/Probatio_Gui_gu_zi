@@ -11,10 +11,7 @@ def get_supabase_client() -> Client:
 # --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (RAG OPTIMIZADO) ---
 
 def search_research_data(tablas_seleccionadas, keywords_raw):
-    """
-    Realiza una búsqueda filtrada ESTRICTAMENTE en la columna 'Palabras Clave'.
-    Optimizado para bases de datos masivas.
-    """
+    """Búsqueda filtrada ESTRICTAMENTE en la columna 'Palabras Clave'."""
     supabase = get_supabase_client()
     contexto_encontrado = []
     
@@ -37,6 +34,30 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
             
     return contexto_encontrado
 
+# --- NUEVO: BUSCADOR EXACTO DE CORPUS (CONCORDANCIAS) ---
+def search_corpus_exact(tablas_seleccionadas, columna_texto, termino_busqueda):
+    """Busca un término exacto dentro del texto completo de las tablas seleccionadas."""
+    supabase = get_supabase_client()
+    resultados_totales = []
+    
+    if not termino_busqueda: return []
+
+    for tabla in tablas_seleccionadas:
+        try:
+            query = supabase.table(tabla).select("*")
+            # ilike permite buscar ignorando mayúsculas/minúsculas
+            response = query.ilike(columna_texto, f"%{termino_busqueda}%").limit(50).execute()
+            
+            if response.data:
+                resultados_totales.append({
+                    "tabla": tabla,
+                    "resultados": response.data
+                })
+        except Exception as e:
+            st.error(f"Error consultando la tabla {tabla}: {str(e)}\nRevisa que la columna '{columna_texto}' exista.")
+            
+    return resultados_totales
+
 # --- 2. GESTIÓN DE PROYECTOS (TESIS / MONOGRAFÍAS) ---
 
 def get_user_projects(user_id):
@@ -49,23 +70,12 @@ def get_user_projects(user_id):
         return []
 
 def create_new_project(user_id, nombre_tesis):
-    """Crea un nuevo registro de proyecto inicializando TODAS las columnas."""
     supabase = get_supabase_client()
-    
     nuevo_proy = {
-        "user_id": user_id,
-        "nombre": nombre_tesis,
-        "estructura": {},          
-        "prompts_maestros": {},    
-        "contenido_redactado": {},
-        "fichas": [],
-        "fuentes_primarias": [], # NUEVA COLUMNA INICIALIZADA
-        "repositorio_indices": [],
-        "estructura_activa": {},
-        "prompts_inteligentes": {},
-        "bibliografia": ""
+        "user_id": user_id, "nombre": nombre_tesis, "estructura": {}, "prompts_maestros": {},    
+        "contenido_redactado": {}, "fichas": [], "fuentes_primarias": [], 
+        "repositorio_indices": [], "estructura_activa": {}, "prompts_inteligentes": {}, "bibliografia": ""
     }
-    
     try:
         return supabase.table("proyectos_a").insert(nuevo_proy).execute()
     except Exception as e:
@@ -87,5 +97,5 @@ def get_user_profile(user_id):
         res = supabase.table("perfiles").select("*").eq("id", user_id).single().execute()
         return res.data
     except Exception as e:
-        st.error(f"Error al obtener el perfil del usuario: {str(e)}")
+        st.error(f"Error al obtener el perfil: {str(e)}")
         return None
