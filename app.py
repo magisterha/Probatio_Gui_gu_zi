@@ -160,7 +160,6 @@ with tab0:
                 if st.form_submit_button("Subir Texto"):
                     if t_tit and t_txt:
                         n_id = str(uuid.uuid4())[:8]
-                        # Inicializamos la fuente con su chat y su lista de notas marginales
                         st.session_state.fuentes.append({
                             "id_fuente": n_id, "titulo": t_tit, "texto_completo": t_txt, 
                             "chat_history": [], "notas_marginales": []
@@ -182,7 +181,6 @@ with tab0:
     with col_lab:
         st.markdown("### 🔬 Laboratorio Filológico")
         if fuente_activa:
-            # Aseguramos compatibilidad: si la fuente es antigua y no tiene la lista, se la creamos
             if "notas_marginales" not in fuente_activa:
                 fuente_activa["notas_marginales"] = []
                 
@@ -192,6 +190,15 @@ with tab0:
             with tab_chat:
                 historial_glosa = fuente_activa.get("chat_history", [])
                 
+                # Opciones de RAG para el chat primario
+                with st.expander("⚙️ Configurar Consulta a Bases de Datos (RAG)"):
+                    usar_rag_fuente = st.checkbox("Cruzar análisis con bases de datos externas", value=False)
+                    tablas_f = []
+                    kws_f = ""
+                    if usar_rag_fuente:
+                        tablas_f = st.multiselect("Bases de datos:", ["戰國策", "Xunzi", "Mencio", "JSON de investigación", "Glosas de 鬼谷子", "Fuentes secundarias", "Analectas de Confucio"], key="tablas_f")
+                        kws_f = st.text_input("Palabras clave (Opcional):", key="kws_f")
+
                 if len(historial_glosa) > 0:
                     if st.button("🎯 Convertir Conversación en Ficha de Investigación", use_container_width=True, type="primary"):
                         with st.spinner("Sintetizando hallazgo y exportando al Puzzle..."):
@@ -217,17 +224,21 @@ with tab0:
                 if prompt := st.chat_input("Consulta a la IA sobre el texto..."):
                     historial_glosa.append({"role": "user", "content": prompt})
                     with st.spinner("Analizando texto primario..."):
-                        # Pasamos también las notas marginales a la IA
-                        res = chat_with_primary_source(historial_glosa[:-1], prompt, fuente_activa['texto_completo'], fuente_activa.get('notas_marginales', []))
+                        # Extraemos el RAG si el usuario activó la casilla
+                        ctx_rag_f = None
+                        if usar_rag_fuente and tablas_f:
+                            ctx_rag_f = search_research_data(tablas_f, kws_f)
+
+                        # Inyectamos notas marginales Y contexto RAG a la IA
+                        res = chat_with_primary_source(historial_glosa[:-1], prompt, fuente_activa['texto_completo'], fuente_activa.get('notas_marginales', []), ctx_rag_f)
                         historial_glosa.append({"role": "assistant", "content": res})
                         fuente_activa['chat_history'] = historial_glosa
                     st.rerun()
             
             # --- PESTAÑA: NOTAS MARGINALES ---
             with tab_notas:
-                st.markdown("Anota traducciones, comentarios o dudas. La IA leerá estas notas para entender tu enfoque.")
+                st.markdown("Anota traducciones o comentarios personales. La IA leerá estas notas.")
                 
-                # Formulario para añadir nueva nota
                 with st.form("form_nueva_nota"):
                     nueva_nota_txt = st.text_area("Añadir nota al margen:")
                     if st.form_submit_button("Guardar Nota"):
@@ -238,14 +249,26 @@ with tab0:
                             })
                             st.rerun()
                 
-                # Mostrar notas existentes
+                # NUEVO: Mostrar notas con opción de EXPORTAR
                 for nota in fuente_activa["notas_marginales"]:
                     with st.container():
-                        col_txt, col_del = st.columns([5, 1])
+                        col_txt, col_exp, col_del = st.columns([4, 1, 1])
                         with col_txt:
                             st.info(nota["texto"])
+                        with col_exp:
+                            if st.button("📤", key=f"exp_nota_{nota['id']}", help="Exportar a Entorno de Ideas"):
+                                st.session_state.fichas.append({
+                                    "id": str(uuid.uuid4())[:8],
+                                    "texto": nota["texto"],
+                                    "cita_pie": f"Nota marginal sobre manuscrito: {fuente_activa['titulo']}",
+                                    "referencia_bib": fuente_activa['titulo'],
+                                    "categoria": "Análisis de Fuentes",
+                                    "chat_history": [],
+                                    "contexto_fijado": fuente_activa['texto_completo']
+                                })
+                                st.toast("✅ Nota exportada al Puzzle")
                         with col_del:
-                            if st.button("🗑️", key=f"del_nota_{nota['id']}"):
+                            if st.button("🗑️", key=f"del_nota_{nota['id']}", help="Eliminar nota"):
                                 fuente_activa["notas_marginales"].remove(nota)
                                 st.rerun()
 
