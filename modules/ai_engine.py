@@ -7,19 +7,27 @@ def get_model():
     return genai.GenerativeModel('gemini-2.0-flash')
 
 # --- MÓDULO NUEVO: FUENTES PRIMARIAS Y GLOSAS ---
-def chat_with_primary_source(messages, user_input, source_text):
+def chat_with_primary_source(messages, user_input, source_text, notas_marginales=None):
     model = get_model()
+    
+    # Preparamos las notas marginales para que la IA las lea
+    notas_str = ""
+    if notas_marginales and len(notas_marginales) > 0:
+        lista_notas = "\n".join([f"- {n['texto']}" for n in notas_marginales])
+        notas_str = f"\n--- NOTAS MARGINALES DEL INVESTIGADOR ---\n{lista_notas}\n-----------------------------------------\n"
     
     system_instruction = f"""Eres un experto filólogo y comentarista de textos clásicos (glosador).
     REGLAS DE HIERRO:
     1. Tienes un único documento primario de referencia. Debes responder a las preguntas del investigador BASÁNDOTE ESTRICTAMENTE en el texto proporcionado abajo.
-    2. Si el usuario te pide analizar una palabra o concepto, busca su aparición en este texto y explica su contexto específico en esta obra.
-    3. No inventes información. Si el texto no menciona lo que el usuario pregunta, indícalo claramente.
-    4. Usa siempre 'Pekín' con acento.
+    2. El investigador ha tomado 'Notas Marginales' sobre este texto. Úsalas como contexto vital para entender su enfoque y línea de investigación.
+    3. Si el usuario te pide analizar una palabra o concepto, busca su aparición en este texto y explica su contexto específico en esta obra.
+    4. No inventes información. Si el texto no menciona lo que el usuario pregunta, indícalo claramente.
+  
     
     --- TEXTO PRIMARIO DE REFERENCIA ---
     {source_text}
     ------------------------------------
+    {notas_str}
     """
     
     prompt_completo = f"INSTRUCCIONES DEL SISTEMA:\n{system_instruction}\n\n--- HISTORIAL DE LA CONVERSACIÓN ---\n"
@@ -80,7 +88,6 @@ def chat_with_ideas(messages, user_input, contexto_rag=None):
     2. DEPENDENCIA TOTAL: Debes responder ÚNICA y EXCLUSIVAMENTE basándote en el "CONTEXTO DE BASES DE DATOS" proporcionado abajo.
     3. CITAS OBLIGATORIAS: Cada afirmación, idea o traducción que des DEBE estar justificada. En el JSON del contexto, la información de la obra, autor o enlace suele estar al final de cada bloque. Debes incluir esa cita exacta en tu respuesta (ej. [Mencio, 2A:1]).
     4. RESPUESTA VACÍA: Si el usuario pregunta algo que no se encuentra en el CONTEXTO RAG proporcionado, no intentes deducirlo. Responde explícitamente: "No hay información en las fuentes consultadas para justificar esta respuesta."
-    5. Usa siempre 'Pekín' con acento.
     {ctx_str}"""
     
     prompt_completo = f"INSTRUCCIONES DEL SISTEMA:\n{system_instruction}\n\n--- HISTORIAL DE LA CONVERSACIÓN ---\n"
@@ -195,7 +202,7 @@ def execute_final_writing(prompt_maestro, notas_texto, idioma, estilo, estilo_ci
     MATERIAL BASE (NOTAS, CITAS Y DEBATE PROFUNDO): {notas_texto}
     
     REQUISITOS: Idioma: {idioma}. Estilo: {estilo}. Citación: {estilo_citacion}. Asegúrate de insertar notas al pie.
-    TAREA: Redacta el contenido del capítulo. NO saludes. Usa 'Pekín' con acento.
+    TAREA: Redacta el contenido del capítulo. NO saludes. 
     """
     return model.generate_content(prompt_final).text
 
