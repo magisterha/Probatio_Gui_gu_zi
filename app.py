@@ -134,6 +134,7 @@ with tab_corpus:
     st.subheader("🔍 Herramienta de Concordancias (Corpus Lingüístico)")
     st.markdown("Busca apariciones exactas de un término en toda la base de datos y expórtalas al Laboratorio Filológico.")
     
+    # Interfaz corregida: eliminamos la columna redundante y dejamos solo 2 espacios
     col_c1, col_c2 = st.columns([2, 2])
     with col_c1:
         tablas_corpus = st.multiselect("Bases de datos a explorar:", ["戰國策", "Xunzi", "Mencio", "Analectas de Confucio", "Glosas de 鬼谷子"], key="tablas_corpus")
@@ -145,6 +146,7 @@ with tab_corpus:
             st.warning("Selecciona al menos una base de datos y escribe un término.")
         else:
             with st.spinner("Rastreando documentos en milisegundos..."):
+                # Llamada limpia sin requerir el nombre de la columna
                 resultados = search_corpus_exact(tablas_corpus, termino_busqueda)
                 st.session_state.resultados_corpus = resultados
                 st.session_state.termino_corpus = termino_busqueda
@@ -155,20 +157,14 @@ with tab_corpus:
         
         for res_tabla in st.session_state.resultados_corpus:
             st.markdown(f"#### 📁 Archivo: {res_tabla['tabla']} ({len(res_tabla['resultados'])} coincidencias)")
+            col_detectada = res_tabla.get('columna_usada')
+            
             for idx, fila in enumerate(res_tabla['resultados']):
+                # Extraemos el texto usando la columna que detectó el backend
+                texto_completo = str(fila.get(col_detectada, ""))
                 
-                # --- DETECTOR INTELIGENTE DE COLUMNAS ---
-                posibles_nombres = ["Texto", "texto", "Contenido", "contenido", "text"]
-                clave_real = next((k for k in fila.keys() if k in posibles_nombres), None)
-                
-                if clave_real:
-                    texto_completo = fila.get(clave_real, "")
-                else:
-                    clave_real = max(fila, key=lambda k: len(str(fila.get(k, ""))))
-                    texto_completo = str(fila.get(clave_real, ""))
-                
-                if not texto_completo:
-                    texto_completo = "[⚠️ El fragmento extraído está vacío]"
+                if not texto_completo.strip():
+                    texto_completo = f"[⚠️ El fragmento extraído de la columna '{col_detectada}' está vacío]"
                 
                 term = st.session_state.termino_corpus
                 idx_find = texto_completo.lower().find(term.lower())
