@@ -35,8 +35,8 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
     return contexto_encontrado
 
 # --- NUEVO: BUSCADOR EXACTO DE CORPUS (CONCORDANCIAS) ---
-def search_corpus_exact(tablas_seleccionadas, columna_texto, termino_busqueda):
-    """Busca un término exacto dentro del texto completo de las tablas seleccionadas."""
+def search_corpus_exact(tablas_seleccionadas, termino_busqueda):
+    """Busca un término exacto dentro del texto asumiendo nombres de columna estándar."""
     supabase = get_supabase_client()
     resultados_totales = []
     
@@ -45,8 +45,8 @@ def search_corpus_exact(tablas_seleccionadas, columna_texto, termino_busqueda):
     for tabla in tablas_seleccionadas:
         try:
             query = supabase.table(tabla).select("*")
-            # ilike permite buscar ignorando mayúsculas/minúsculas
-            response = query.ilike(columna_texto, f"%{termino_busqueda}%").limit(50).execute()
+            # Buscamos asumiendo que la columna se llama "Texto" (PostgreSQL lo maneja internamente)
+            response = query.ilike("Texto", f"%{termino_busqueda}%").limit(50).execute()
             
             if response.data:
                 resultados_totales.append({
@@ -54,7 +54,14 @@ def search_corpus_exact(tablas_seleccionadas, columna_texto, termino_busqueda):
                     "resultados": response.data
                 })
         except Exception as e:
-            st.error(f"Error consultando la tabla {tabla}: {str(e)}\nRevisa que la columna '{columna_texto}' exista.")
+            # Si falla porque la columna se llama diferente, lo intentamos con "texto" en minúscula
+            try:
+                query_alt = supabase.table(tabla).select("*")
+                response_alt = query_alt.ilike("texto", f"%{termino_busqueda}%").limit(50).execute()
+                if response_alt.data:
+                    resultados_totales.append({"tabla": tabla, "resultados": response_alt.data})
+            except Exception as e2:
+                st.error(f"Error en tabla {tabla}: No se encontró la columna 'Texto' o 'texto'.")
             
     return resultados_totales
 
