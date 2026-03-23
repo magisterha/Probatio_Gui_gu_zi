@@ -36,7 +36,7 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
 
 # --- NUEVO: BUSCADOR EXACTO DE CORPUS CON DETECCIÓN INTELIGENTE ---
 def search_corpus_exact(tablas_seleccionadas, termino_busqueda):
-    """Busca un término detectando automáticamente la columna de texto."""
+    """Busca un término detectando automáticamente la columna de texto y filtrando JSONB."""
     supabase = get_supabase_client()
     resultados_totales = []
     
@@ -49,15 +49,22 @@ def search_corpus_exact(tablas_seleccionadas, termino_busqueda):
             if not sample.data:
                 continue # Si la tabla está vacía, saltamos a la siguiente
                 
-            columnas = sample.data[0].keys()
+            fila_prueba = sample.data[0]
             
-            # Buscamos nombres lógicos primero
+            # FILTRO ESTRICTO: Solo nos quedamos con las columnas que contienen texto puro (Strings)
+            # Esto evita que Supabase intente buscar texto dentro de un JSONB o un Número y colapse.
+            columnas_texto = [k for k, v in fila_prueba.items() if isinstance(v, str)]
+            
+            if not columnas_texto:
+                continue # Si no hay ninguna columna de texto en esta tabla, la saltamos
+            
+            # Buscamos nombres lógicos primero dentro de las columnas seguras
             posibles_nombres = ["Texto", "texto", "Contenido", "contenido", "text", "Traduccion", "traduccion", "Original"]
-            columna_objetivo = next((k for k in columnas if k in posibles_nombres), None)
+            columna_objetivo = next((k for k in columnas_texto if k in posibles_nombres), None)
             
-            # Si no hay nombres lógicos, seleccionamos la columna que almacene la cadena de texto más larga
+            # Si no hay nombres lógicos, seleccionamos la columna de texto con la cadena más larga
             if not columna_objetivo:
-                columna_objetivo = max(columnas, key=lambda k: len(str(sample.data[0].get(k, ""))))
+                columna_objetivo = max(columnas_texto, key=lambda k: len(fila_prueba.get(k, "")))
             
             # PASO 2: Búsqueda segura en la columna detectada
             response = supabase.table(tabla).select("*").ilike(columna_objetivo, f"%{termino_busqueda}%").limit(50).execute()
