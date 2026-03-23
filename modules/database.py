@@ -34,9 +34,9 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
             
     return contexto_encontrado
 
-# --- NUEVO: BUSCADOR EXACTO DE CORPUS (CONCORDANCIAS) ---
+# --- NUEVO: BUSCADOR EXACTO DE CORPUS CON DETECCIÓN INTELIGENTE ---
 def search_corpus_exact(tablas_seleccionadas, termino_busqueda):
-    """Busca un término exacto dentro del texto asumiendo nombres de columna estándar."""
+    """Busca un término detectando automáticamente la columna de texto."""
     supabase = get_supabase_client()
     resultados_totales = []
     
@@ -44,24 +44,32 @@ def search_corpus_exact(tablas_seleccionadas, termino_busqueda):
 
     for tabla in tablas_seleccionadas:
         try:
-            query = supabase.table(tabla).select("*")
-            # Buscamos asumiendo que la columna se llama "Texto" (PostgreSQL lo maneja internamente)
-            response = query.ilike("Texto", f"%{termino_busqueda}%").limit(50).execute()
+            # PASO 1: Exploración. Descargamos 1 fila para ver la estructura de la tabla
+            sample = supabase.table(tabla).select("*").limit(1).execute()
+            if not sample.data:
+                continue # Si la tabla está vacía, saltamos a la siguiente
+                
+            columnas = sample.data[0].keys()
+            
+            # Buscamos nombres lógicos primero
+            posibles_nombres = ["Texto", "texto", "Contenido", "contenido", "text", "Traduccion", "traduccion", "Original"]
+            columna_objetivo = next((k for k in columnas if k in posibles_nombres), None)
+            
+            # Si no hay nombres lógicos, seleccionamos la columna que almacene la cadena de texto más larga
+            if not columna_objetivo:
+                columna_objetivo = max(columnas, key=lambda k: len(str(sample.data[0].get(k, ""))))
+            
+            # PASO 2: Búsqueda segura en la columna detectada
+            response = supabase.table(tabla).select("*").ilike(columna_objetivo, f"%{termino_busqueda}%").limit(50).execute()
             
             if response.data:
                 resultados_totales.append({
                     "tabla": tabla,
+                    "columna_usada": columna_objetivo, # Guardamos esto para que app.py sepa dónde leer
                     "resultados": response.data
                 })
         except Exception as e:
-            # Si falla porque la columna se llama diferente, lo intentamos con "texto" en minúscula
-            try:
-                query_alt = supabase.table(tabla).select("*")
-                response_alt = query_alt.ilike("texto", f"%{termino_busqueda}%").limit(50).execute()
-                if response_alt.data:
-                    resultados_totales.append({"tabla": tabla, "resultados": response_alt.data})
-            except Exception as e2:
-                st.error(f"Error en tabla {tabla}: No se encontró la columna 'Texto' o 'texto'.")
+            st.error(f"Error interno en tabla {tabla}: {str(e)}")
             
     return resultados_totales
 
