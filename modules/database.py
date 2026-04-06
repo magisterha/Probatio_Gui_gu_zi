@@ -1,6 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
-import re  # NUEVO: Importamos regex para el escudo antimetadatos
+import re  # Necesario para el escudo antimetadatos (detección de fechas e IDs)
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 
