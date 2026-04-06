@@ -1,5 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
+import re  # NUEVO: Importamos regex para el escudo antimetadatos
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 
@@ -34,45 +35,66 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
             
     return contexto_encontrado
 
-# --- NUEVO: BUSCADOR EXACTO DE CORPUS CON DETECCIÓN INTELIGENTE ---
+# --- NUEVO: BUSCADOR EXACTO DE CORPUS CON ESCUDO ANTIMETADATOS ---
 def search_corpus_exact(tablas_seleccionadas, termino_busqueda):
-    """Busca un término detectando automáticamente la columna de texto y filtrando JSONB."""
+    """Busca un término detectando automáticamente la columna de texto y bloqueando fechas/IDs."""
     supabase = get_supabase_client()
     resultados_totales = []
     
     if not termino_busqueda: return []
 
+    # Lista negra de nombres de columnas de sistema
+    columnas_ignoradas = ["id", "uuid", "user_id", "created_at", "updated_at", "fecha_creacion", "fecha", "time"]
+    
+    # Patrones visuales para detectar fechas ISO o códigos UUID camuflados como texto
+    patron_fecha = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}')
+    patron_uuid = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+
     for tabla in tablas_seleccionadas:
         try:
-            # PASO 1: Exploración. Descargamos 1 fila para ver la estructura de la tabla
+            # PASO 1: Exploración
             sample = supabase.table(tabla).select("*").limit(1).execute()
             if not sample.data:
-                continue # Si la tabla está vacía, saltamos a la siguiente
+                continue 
                 
             fila_prueba = sample.data[0]
+            columnas_validas = []
             
-            # FILTRO ESTRICTO: Solo nos quedamos con las columnas que contienen texto puro (Strings)
-            # Esto evita que Supabase intente buscar texto dentro de un JSONB o un Número y colapse.
-            columnas_texto = [k for k, v in fila_prueba.items() if isinstance(v, str)]
+            # --- EL ESCUDO ANTIMETADATOS EN ACCIÓN ---
+            for col_name, col_value in fila_prueba.items():
+                # 1. ¿Se llama como un metadato?
+                if col_name.lower() in columnas_ignoradas:
+                    continue
+                
+                # 2. ¿Es texto puro?
+                if not isinstance(col_value, str):
+                    continue
+                    
+                # 3. ¿Tiene formato de fecha de servidor o ID?
+                if patron_fecha.match(col_value) or patron_uuid.match(col_value):
+                    continue
+                    
+                # Si pasa las 3 pruebas, es una columna segura para buscar
+                columnas_validas.append(col_name)
             
-            if not columnas_texto:
-                continue # Si no hay ninguna columna de texto en esta tabla, la saltamos
+            if not columnas_validas:
+                continue 
             
-            # Buscamos nombres lógicos primero dentro de las columnas seguras
-            posibles_nombres = ["Texto", "texto", "Contenido", "contenido", "text", "Traduccion", "traduccion", "Original"]
-            columna_objetivo = next((k for k in columnas_texto if k in posibles_nombres), None)
+            # PASO 2: Selección de la mejor columna entre las supervivientes
+            posibles_nombres = ["Texto", "texto", "Contenido", "contenido", "text", "Traduccion", "traduccion", "Original", "original"]
+            columna_objetivo = next((k for k in columnas_validas if k in posibles_nombres), None)
             
-            # Si no hay nombres lógicos, seleccionamos la columna de texto con la cadena más larga
             if not columna_objetivo:
-                columna_objetivo = max(columnas_texto, key=lambda k: len(fila_prueba.get(k, "")))
+                # Si no hay nombres evidentes, nos quedamos con la que tenga el texto más largo
+                columna_objetivo = max(columnas_validas, key=lambda k: len(fila_prueba.get(k, "")))
             
-            # PASO 2: Búsqueda segura en la columna detectada
+            # PASO 3: Búsqueda letal y segura
             response = supabase.table(tabla).select("*").ilike(columna_objetivo, f"%{termino_busqueda}%").limit(50).execute()
             
             if response.data:
                 resultados_totales.append({
                     "tabla": tabla,
-                    "columna_usada": columna_objetivo, # Guardamos esto para que app.py sepa dónde leer
+                    "columna_usada": columna_objetivo, 
                     "resultados": response.data
                 })
         except Exception as e:
