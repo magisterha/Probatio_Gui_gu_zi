@@ -347,7 +347,8 @@ with tab_ideas:
         estilo_citacion_a = st.selectbox("Estilo de Citación:", ["APA 7", "Chicago (Notas y Bibliografía)", "Harvard", "MLA"], key="estilo_a")
     with col_ctrl2:
         tablas_a = st.multiselect("Bases de datos RAG en la nube:", ["戰國策", "Xunzi", "Mencio", "JSON de investigación", "Glosas de 鬼谷子", "Fuentes secundarias", "Analectas de Confucio"], key="tablas_a")
-        kws_a = st.text_input("Palabras clave para filtrar las fuentes en la nube (Opcional):", key="kws_a")
+        # MODIFICACIÓN AÑADIDA: El campo es ahora obligatorio para que el RAG funcione
+        kws_a = st.text_input("Palabras clave a buscar (Requerido para activar RAG):", key="kws_a")
 
     st.divider()
     col_inputs, col_tablero = st.columns([1, 1.2])
@@ -397,6 +398,9 @@ with tab_ideas:
                 historial_actual_a.append({"role": "user", "content": prompt_a})
                 with st.spinner("Procesando consulta y anclando fuentes..."):
                     if st.session_state.active_chat_id is None:
+                        # MODIFICACIÓN AÑADIDA: Aviso de seguridad UX si intentan usar RAG sin palabras clave
+                        if tablas_a and not kws_a.strip():
+                            st.warning("⚠️ Seleccionaste bases de datos, pero no introdujiste palabras clave. La IA no recibirá contexto externo.")
                         contexto_rag_a = search_research_data(tablas_a, kws_a) if tablas_a else None
                     else:
                         contexto_rag_a = ficha_activa_a.get('contexto_fijado', None)
