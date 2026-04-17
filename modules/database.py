@@ -9,49 +9,67 @@ def get_supabase_client() -> Client:
     """Retorna el cliente de Supabase configurado. Usamos cache para optimizar conexiones."""
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-# --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (RAG OMNIDIRECCIONAL) ---
+# --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (RAG ROBUSTO Y PARALELO) ---
 
 def search_research_data(tablas_seleccionadas, keywords_raw):
-    """Búsqueda RAG omnidireccional en todas las columnas (incluyendo JSONB)."""
+    """Búsqueda RAG omnidireccional segura. Evita errores de sintaxis OR realizando micro-consultas."""
     supabase = get_supabase_client()
     contexto_encontrado = []
     
     lista_keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
     if not lista_keywords: return []
 
+    # Columnas que sabemos que no contienen texto útil para búsqueda humana
+    columnas_ignoradas = ["id", "uuid", "user_id", "created_at", "updated_at", "fecha"]
+    patron_fecha = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}')
+    patron_uuid = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+
     for tabla in tablas_seleccionadas:
         try:
-            # Exploración: Descubrimos qué columnas tiene la tabla
+            # 1. Analizar la estructura de la tabla
             sample = supabase.table(tabla).select("*").limit(1).execute()
             if not sample.data: continue
                 
-            columnas = sample.data[0].keys()
-            condiciones_or = []
+            fila_prueba = sample.data[0]
+            columnas_busqueda = []
             
-            # Creamos la condición para buscar cada keyword en CADA columna
+            # Identificamos columnas seguras de texto (ej. "Palabras Clave", "Nombre artículo")
+            for col_name, col_value in fila_prueba.items():
+                if col_name.lower() in columnas_ignoradas: continue
+                if not isinstance(col_value, str): continue
+                if patron_fecha.match(col_value) or patron_uuid.match(col_value): continue
+                columnas_busqueda.append(col_name)
+            
+            if not columnas_busqueda: continue
+            
+            resultados_tabla = []
+            ids_encontrados = set()
+            
+            # 2. Micro-consultas paralelas nativas (A prueba de errores de sintaxis por espacios)
             for kw in lista_keywords:
-                for col in columnas:
-                    # Ignoramos metadatos del sistema
-                    if col.lower() not in ["id", "uuid", "user_id", "created_at", "updated_at"]:
-                        # ::text permite buscar dentro de JSONB sin que la BD colapse
-                        condiciones_or.append(f'"{col}"::text.ilike.%{kw}%')
-                        
-            if not condiciones_or: continue
+                for col in columnas_busqueda:
+                    try:
+                        # Usamos el ilike nativo de Python que maneja espacios perfectamente
+                        res = supabase.table(tabla).select("*").ilike(col, f"%{kw}%").limit(5).execute()
+                        for fila in res.data:
+                            # Evitamos meter la misma fila dos veces si coincide en varias columnas
+                            fid = fila.get("id", str(fila)) 
+                            if fid not in ids_encontrados:
+                                ids_encontrados.add(fid)
+                                resultados_tabla.append(fila)
+                    except Exception as sub_e:
+                        # Si una columna específica falla, no rompemos toda la búsqueda
+                        continue
             
-            # Unimos todas las condiciones (OR)
-            filtro_or = ",".join(condiciones_or)
-            
-            # Ejecutamos la búsqueda limitando a 10 resultados para no saturar la memoria de la IA
-            response = supabase.table(tabla).select("*").or_(filtro_or).limit(10).execute()
-            
-            if response.data:
+            if resultados_tabla:
                 contexto_encontrado.append({
                     "tabla": tabla,
-                    "resultados": response.data
+                    "resultados": resultados_tabla
                 })
+                
         except Exception as e:
-            # Fallo silencioso controlado para no romper el chat si una tabla da error
-            pass
+            # Ahora mostramos el error en pantalla en lugar de ocultarlo, por si hay fallos de red
+            st.error(f"⚠️ Error al acceder a la tabla '{tabla}': {str(e)}")
             
     return contexto_encontrado
 
