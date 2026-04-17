@@ -1,6 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
-import re  # Necesario para el escudo antimetadatos (detección de fechas e IDs)
+import re
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 
@@ -9,10 +9,10 @@ def get_supabase_client() -> Client:
     """Retorna el cliente de Supabase configurado. Usamos cache para optimizar conexiones."""
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
-# --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (RAG OPTIMIZADO) ---
+# --- 1. MÓDULO DE BÚSQUEDA DE INVESTIGACIÓN (RAG OMNIDIRECCIONAL) ---
 
 def search_research_data(tablas_seleccionadas, keywords_raw):
-    """Búsqueda filtrada ESTRICTAMENTE en la columna 'Palabras Clave'."""
+    """Búsqueda RAG omnidireccional en todas las columnas (incluyendo JSONB)."""
     supabase = get_supabase_client()
     contexto_encontrado = []
     
@@ -21,9 +21,28 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
 
     for tabla in tablas_seleccionadas:
         try:
-            query = supabase.table(tabla).select("*")
-            condiciones = ",".join([f'"Palabras Clave".ilike.%{kw}%' for kw in lista_keywords])
-            response = query.or_(condiciones).limit(20).execute()
+            # Exploración: Descubrimos qué columnas tiene la tabla
+            sample = supabase.table(tabla).select("*").limit(1).execute()
+            if not sample.data: continue
+                
+            columnas = sample.data[0].keys()
+            condiciones_or = []
+            
+            # Creamos la condición para buscar cada keyword en CADA columna
+            for kw in lista_keywords:
+                for col in columnas:
+                    # Ignoramos metadatos del sistema
+                    if col.lower() not in ["id", "uuid", "user_id", "created_at", "updated_at"]:
+                        # ::text permite buscar dentro de JSONB sin que la BD colapse
+                        condiciones_or.append(f'"{col}"::text.ilike.%{kw}%')
+                        
+            if not condiciones_or: continue
+            
+            # Unimos todas las condiciones (OR)
+            filtro_or = ",".join(condiciones_or)
+            
+            # Ejecutamos la búsqueda limitando a 10 resultados para no saturar la memoria de la IA
+            response = supabase.table(tabla).select("*").or_(filtro_or).limit(10).execute()
             
             if response.data:
                 contexto_encontrado.append({
@@ -31,7 +50,8 @@ def search_research_data(tablas_seleccionadas, keywords_raw):
                     "resultados": response.data
                 })
         except Exception as e:
-            st.error(f"Error consultando la tabla {tabla}: {str(e)}\n¿Existe la columna 'Palabras Clave' en esta tabla?")
+            # Fallo silencioso controlado para no romper el chat si una tabla da error
+            pass
             
     return contexto_encontrado
 
@@ -43,52 +63,32 @@ def search_corpus_exact(tablas_seleccionadas, termino_busqueda):
     
     if not termino_busqueda: return []
 
-    # Lista negra de nombres de columnas de sistema
     columnas_ignoradas = ["id", "uuid", "user_id", "created_at", "updated_at", "fecha_creacion", "fecha", "time"]
-    
-    # Patrones visuales para detectar fechas ISO o códigos UUID camuflados como texto
     patron_fecha = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}')
     patron_uuid = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
     for tabla in tablas_seleccionadas:
         try:
-            # PASO 1: Exploración
             sample = supabase.table(tabla).select("*").limit(1).execute()
-            if not sample.data:
-                continue 
+            if not sample.data: continue 
                 
             fila_prueba = sample.data[0]
             columnas_validas = []
             
-            # --- EL ESCUDO ANTIMETADATOS EN ACCIÓN ---
             for col_name, col_value in fila_prueba.items():
-                # 1. ¿Se llama como un metadato?
-                if col_name.lower() in columnas_ignoradas:
-                    continue
-                
-                # 2. ¿Es texto puro?
-                if not isinstance(col_value, str):
-                    continue
-                    
-                # 3. ¿Tiene formato de fecha de servidor o ID?
-                if patron_fecha.match(col_value) or patron_uuid.match(col_value):
-                    continue
-                    
-                # Si pasa las 3 pruebas, es una columna segura para buscar
+                if col_name.lower() in columnas_ignoradas: continue
+                if not isinstance(col_value, str): continue
+                if patron_fecha.match(col_value) or patron_uuid.match(col_value): continue
                 columnas_validas.append(col_name)
             
-            if not columnas_validas:
-                continue 
+            if not columnas_validas: continue 
             
-            # PASO 2: Selección de la mejor columna entre las supervivientes
             posibles_nombres = ["Texto", "texto", "Contenido", "contenido", "text", "Traduccion", "traduccion", "Original", "original"]
             columna_objetivo = next((k for k in columnas_validas if k in posibles_nombres), None)
             
             if not columna_objetivo:
-                # Si no hay nombres evidentes, nos quedamos con la que tenga el texto más largo
                 columna_objetivo = max(columnas_validas, key=lambda k: len(fila_prueba.get(k, "")))
             
-            # PASO 3: Búsqueda letal y segura
             response = supabase.table(tabla).select("*").ilike(columna_objetivo, f"%{termino_busqueda}%").limit(50).execute()
             
             if response.data:
